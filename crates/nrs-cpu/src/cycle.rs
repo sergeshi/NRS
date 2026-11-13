@@ -10,11 +10,15 @@ pub enum BusAccess { Read { address: u16, value: u8 }, Write { address: u16, val
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CpuFault { UnsupportedInstruction { opcode: u8 }, InterruptSequencePending, Jammed { opcode: u8 } }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Kind { Read, Write, Implied, Branch, Control }
+enum Kind { Read, Write, ReadModifyWrite, Implied, Branch, Control }
 
 fn kind(op: &Opcode) -> Kind {
     use Mnemonic::*;
+    if op.mode == AddressingMode::Accumulator {
+        return Kind::Implied;
+    }
     match op.mnemonic {
+        ASL | LSR | ROL | ROR | INC | DEC | SLO | RLA | SRE | RRA | DCP | ISC => Kind::ReadModifyWrite,
         STA | STX | STY | SAX => Kind::Write,
         BCC | BCS | BEQ | BMI | BNE | BPL | BVC | BVS => Kind::Branch,
         BRK | JMP | JSR | RTI | RTS | PHA | PHP | PLA | PLP => Kind::Control,
@@ -77,6 +81,83 @@ impl CycleCpu {
         BEQ=>self.state.p&flags::ZERO!=0,BNE=>self.state.p&flags::ZERO==0,
         BMI=>self.state.p&flags::NEGATIVE!=0,BPL=>self.state.p&flags::NEGATIVE==0,
         BVC=>self.state.p&flags::OVERFLOW==0,BVS=>self.state.p&flags::OVERFLOW!=0,_=>false}}
+    fn transform(&mut self, m: Mnemonic, value: u8) -> Result<u8, CpuFault> {
+        use Mnemonic::*;
+        let carry_in = u8::from(self.state.p & flags::CARRY != 0);
+        let result = match m {
+            ASL | SLO => {
+                self.state.p = (self.state.p & !flags::CARRY) | if value & 0x80 != 0 { flags::CARRY } else { 0 };
+                value.wrapping_shl(1)
+            }
+            LSR | SRE => {
+                self.state.p = (self.state.p & !flags::CARRY) | (value & 1);
+                value >> 1
+            }
+            ROL | RLA => {
+                self.state.p = (self.state.p & !flags::CARRY) | if value & 0x80 != 0 { flags::CARRY } else { 0 };
+                (value << 1) | carry_in
+            }
+            ROR | RRA => {
+                self.state.p = (self.state.p & !flags::CARRY) | (value & 1);
+                (value >> 1) | (carry_in << 7)
+            }
+            INC | ISC => value.wrapping_add(1),
+            DEC | DCP => value.wrapping_sub(1),
+            _ => return Err(CpuFault::UnsupportedInstruction { opcode: self.state.opcode }),
+        };
+        Ok(result)
+    }
+
+    fn finish_rmw(&mut self, m: Mnemonic, value: u8) -> Result<(), CpuFault> {
+        use Mnemonic::*;
+        match m {
+            SLO => { self.state.a |= value; self.nz(self.state.a); }
+            RLA => { self.state.a &= value; self.nz(self.state.a); }
+            SRE => { self.state.a ^= value; self.nz(self.state.a); }
+            RRA => self.adc(value),
+            DCP => self.compare(self.state.a, value),
+            ISC => self.adc(!value),
+            _ => self.nz(value),
+        }
+        Ok(())
+    }
+
+    fn rmw_cycle<B: CpuBus>(&mut self, b: &mut B, op: Opcode, ph: u8) -> Result<BusAccess, CpuFault> {
+        let mode = op.mode;
+        let access = match mode {
+            AddressingMode::ZeroPage => match ph {
+                1 => { let (v, a) = self.fetch(b); self.state.effective = u16::from(v); self.state.phase = 2; a }
+                2 => { let a = self.read(b, self.state.effective); if let BusAccess::Read { value, .. } = a { self.state.operand = value; } self.state.phase = 3; a }
+                3 => { let new = self.transform(op.mnemonic, self.state.operand)?; self.state.low = new; self.state.phase = 4; self.write(b, self.state.effective, self.state.operand) }
+                _ => { let new = self.state.low; let a = self.write(b, self.state.effective, new); self.finish_rmw(op.mnemonic, new)?; self.finish(); a }
+            },
+            AddressingMode::ZeroPageX => match ph {
+                1 => { let (v, a) = self.fetch(b); self.state.operand = v; self.state.phase = 2; a }
+                2 => { let a = self.read(b, u16::from(self.state.operand)); self.state.effective = u16::from(self.state.operand.wrapping_add(self.state.x)); self.state.phase = 3; a }
+                3 => { let a = self.read(b, self.state.effective); if let BusAccess::Read { value, .. } = a { self.state.operand = value; } self.state.phase = 4; a }
+                4 => { self.state.low = self.transform(op.mnemonic, self.state.operand)?; self.state.phase = 5; self.write(b, self.state.effective, self.state.operand) }
+                _ => { let new = self.state.low; let a = self.write(b, self.state.effective, new); self.finish_rmw(op.mnemonic, new)?; self.finish(); a }
+            },
+            AddressingMode::Absolute => match ph {
+                1 => { let (v, a) = self.fetch(b); self.state.low = v; self.state.phase = 2; a }
+                2 => { let (v, a) = self.fetch(b); self.state.effective = u16::from_le_bytes([self.state.low, v]); self.state.phase = 3; a }
+                3 => { let a = self.read(b, self.state.effective); if let BusAccess::Read { value, .. } = a { self.state.operand = value; } self.state.phase = 4; a }
+                4 => { self.state.low = self.transform(op.mnemonic, self.state.operand)?; self.state.phase = 5; self.write(b, self.state.effective, self.state.operand) }
+                _ => { let new = self.state.low; let a = self.write(b, self.state.effective, new); self.finish_rmw(op.mnemonic, new)?; self.finish(); a }
+            },
+            AddressingMode::AbsoluteX => match ph {
+                1 => { let (v, a) = self.fetch(b); self.state.low = v; self.state.phase = 2; a }
+                2 => { let (v, a) = self.fetch(b); self.state.base = u16::from_le_bytes([self.state.low, v]); self.state.effective = self.state.base.wrapping_add(u16::from(self.state.x)); self.state.phase = 3; a }
+                3 => { let addr = (self.state.base & 0xFF00) | (self.state.effective & 0x00FF); self.state.phase = 4; self.read(b, addr) }
+                4 => { let a = self.read(b, self.state.effective); if let BusAccess::Read { value, .. } = a { self.state.operand = value; } self.state.phase = 5; a }
+                5 => { self.state.low = self.transform(op.mnemonic, self.state.operand)?; self.state.phase = 6; self.write(b, self.state.effective, self.state.operand) }
+                _ => { let new = self.state.low; let a = self.write(b, self.state.effective, new); self.finish_rmw(op.mnemonic, new)?; self.finish(); a }
+            },
+            _ => return Err(CpuFault::UnsupportedInstruction { opcode: self.state.opcode }),
+        };
+        Ok(access)
+    }
+
     fn implied(&mut self,m:Mnemonic)->Result<(),CpuFault>{use Mnemonic::*;match m{
         CLC=>self.state.p&=!flags::CARRY,CLD=>self.state.p&=!flags::DECIMAL,CLI=>self.state.p&=!flags::INTERRUPT_DISABLE,
         CLV=>self.state.p&=!flags::OVERFLOW,SEC=>self.state.p|=flags::CARRY,SED=>self.state.p|=flags::DECIMAL,SEI=>self.state.p|=flags::INTERRUPT_DISABLE,
@@ -84,7 +165,12 @@ impl CycleCpu {
         INX=>{self.state.x=self.state.x.wrapping_add(1);self.nz(self.state.x)},INY=>{self.state.y=self.state.y.wrapping_add(1);self.nz(self.state.y)},
         TAX=>{self.state.x=self.state.a;self.nz(self.state.x)},TAY=>{self.state.y=self.state.a;self.nz(self.state.y)},
         TSX=>{self.state.x=self.state.sp;self.nz(self.state.x)},TXA=>{self.state.a=self.state.x;self.nz(self.state.a)},
-        TXS=>self.state.sp=self.state.x,TYA=>{self.state.a=self.state.y;self.nz(self.state.a)},NOP=>{},
+        TXS=>self.state.sp=self.state.x,TYA=>{self.state.a=self.state.y;self.nz(self.state.a)},
+        ASL=>{self.state.a=self.transform(ASL,self.state.a)?;self.nz(self.state.a)},
+        LSR=>{self.state.a=self.transform(LSR,self.state.a)?;self.nz(self.state.a)},
+        ROL=>{self.state.a=self.transform(ROL,self.state.a)?;self.nz(self.state.a)},
+        ROR=>{self.state.a=self.transform(ROR,self.state.a)?;self.nz(self.state.a)},
+        NOP=>{},
         _=>return Err(CpuFault::UnsupportedInstruction{opcode:self.state.opcode})}self.state.p|=flags::UNUSED;Ok(())}
 
     /// Executes one bus cycle. It never performs more than one bus read/write.
@@ -107,6 +193,7 @@ impl CycleCpu {
                     else{self.state.pc=self.state.effective;self.finish();}Ok(a)}
             }
             Kind::Control=>Err(CpuFault::UnsupportedInstruction{opcode:self.state.opcode}),
+            Kind::ReadModifyWrite=>self.rmw_cycle(b,op,ph),
             Kind::Read|Kind::Write=>self.memory_cycle(b,op,ph)
         }
     }
