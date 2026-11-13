@@ -430,4 +430,50 @@ mod tests{
      assert_ne!(c.state().p & flags::CARRY,0);
  }
 
+
+ #[test]
+ fn jsr_and_rts_use_hardware_stack_bus_cycles() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0x20); b.m.insert(0x8001,0x34); b.m.insert(0x8002,0x12);
+     let mut c=CycleCpu::new(); c.set_pc(0x8000);
+     let jsr: Vec<_>=(0..6).map(|_|c.clock(&mut b).unwrap()).collect();
+     assert_eq!(jsr[2],BusAccess::Read{address:0x01FD,value:0});
+     assert_eq!(jsr[3],BusAccess::Write{address:0x01FD,value:0x80});
+     assert_eq!(jsr[4],BusAccess::Write{address:0x01FC,value:0x02});
+     assert_eq!(c.state().pc,0x1234); assert_eq!(c.state().sp,0xFB);
+
+     b.m.insert(0x1234,0x60); // RTS
+     b.m.insert(0x01FC,0x02); b.m.insert(0x01FD,0x80);
+     let rts: Vec<_>=(0..6).map(|_|c.clock(&mut b).unwrap()).collect();
+     assert_eq!(rts[3],BusAccess::Read{address:0x01FC,value:0x02});
+     assert_eq!(rts[4],BusAccess::Read{address:0x01FD,value:0x80});
+     assert_eq!(c.state().pc,0x8003); assert_eq!(c.state().sp,0xFD);
+ }
+
+ #[test]
+ fn brk_pushes_pc_and_status_then_reads_irq_vector() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0x00); b.m.insert(0x8001,0xEA);
+     b.m.insert(0xFFFE,0x00); b.m.insert(0xFFFF,0x90);
+     let mut c=CycleCpu::new(); c.set_pc(0x8000);
+     let trace: Vec<_>=(0..7).map(|_|c.clock(&mut b).unwrap()).collect();
+     assert_eq!(trace[1],BusAccess::Read{address:0x8001,value:0xEA});
+     assert_eq!(trace[2],BusAccess::Write{address:0x01FD,value:0x80});
+     assert_eq!(trace[3],BusAccess::Write{address:0x01FC,value:0x02});
+     assert_eq!(trace[4],BusAccess::Write{address:0x01FB,value:flags::INTERRUPT_DISABLE|flags::UNUSED|flags::BREAK});
+     assert_eq!(trace[5],BusAccess::Read{address:0xFFFE,value:0x00});
+     assert_eq!(trace[6],BusAccess::Read{address:0xFFFF,value:0x90});
+     assert_eq!(c.state().pc,0x9000); assert_eq!(c.state().sp,0xFA);
+ }
+
+ #[test]
+ fn indirect_jmp_preserves_the_6502_page_wrap_bug() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0x6C); b.m.insert(0x8001,0xFF); b.m.insert(0x8002,0x12);
+     b.m.insert(0x12FF,0x34); b.m.insert(0x1200,0x56); b.m.insert(0x1300,0x99);
+     let mut c=CycleCpu::new(); c.set_pc(0x8000);
+     for _ in 0..5 { c.clock(&mut b).unwrap(); }
+     assert_eq!(c.state().pc,0x5634);
+ }
+
 }
