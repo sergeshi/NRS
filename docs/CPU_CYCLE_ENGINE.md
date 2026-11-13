@@ -19,6 +19,7 @@ available through `CycleCpuState` and can be restored mid-instruction.
   including the old-value write followed by the modified-value write.
 - Accumulator ASL/LSR/ROL/ROR and unofficial combined RMW operations
   SLO/RLA/SRE/RRA/DCP/ISC for the implemented memory addressing forms.
+- Stable unofficial ALR/ANC/ARR/AXS immediate operations and LAS absolute-Y.
 - Stack operations PHA/PHP/PLA/PLP, JSR/RTS/RTI, BRK, JMP absolute and JMP
   indirect (including the original 6502 indirect-page-wrap behavior).
 - Seven-cycle IRQ/NMI entry, NMI priority, vector selection and B-clear status push.
@@ -34,7 +35,7 @@ The following work remains before the CPU can be considered complete:
 - Exact IRQ polling latency and edge behavior around CLI/SEI/PLP/RTI.
 - Exact power-on state, analog startup behavior and IRQ polling edge cases around CLI/SEI/PLP/RTI.
 - Remaining unofficial instructions and unstable bus-value/address behavior
-  (including XAA, AHX, SHX, SHY, TAS and related opcodes).
+  (including XAA, immediate LAX, AHX, SHX, SHY, TAS and related opcodes).
 - Exhaustive cycle-by-cycle validation for every opcode and addressing form.
 - DMA stalls and their interaction with the system scheduler.
 
