@@ -22,6 +22,7 @@ available through `CycleCpuState` and can be restored mid-instruction.
 - Stack operations PHA/PHP/PLA/PLP, JSR/RTS/RTI, BRK, JMP absolute and JMP
   indirect (including the original 6502 indirect-page-wrap behavior).
 - Seven-cycle IRQ/NMI entry, NMI priority, vector selection and B-clear status push.
+- Seven-cycle RESET sequence, stack-pointer reset decrements, reset-vector fetch and recovery from KIL/JAM.
 - KIL/JAM latch and explicit fault reporting for unsupported sequences.
 - Snapshot/restore in the middle of an instruction.
 
@@ -31,7 +32,7 @@ This is an executable foundation, not a claim of full 6502/2A03 conformance.
 The following work remains before the CPU can be considered complete:
 
 - Exact IRQ polling latency and edge behavior around CLI/SEI/PLP/RTI.
-- RESET sequence and hardware-accurate power-on/reset state.
+- Exact power-on state, analog startup behavior and IRQ polling edge cases around CLI/SEI/PLP/RTI.
 - Remaining unofficial instructions and unstable bus-value/address behavior
   (including XAA, AHX, SHX, SHY, TAS and related opcodes).
 - Exhaustive cycle-by-cycle validation for every opcode and addressing form.
