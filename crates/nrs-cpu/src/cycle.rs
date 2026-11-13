@@ -476,4 +476,37 @@ mod tests{
      assert_eq!(c.state().pc,0x5634);
  }
 
+
+ #[test]
+ fn rti_restores_status_pc_and_stack_pointer() {
+     let mut b=Ram::default();
+     b.m.insert(0x9000,0x40);
+     b.m.insert(0x01FA,0x00);
+     b.m.insert(0x01FB,flags::CARRY|flags::BREAK);
+     b.m.insert(0x01FC,0x34);
+     b.m.insert(0x01FD,0x12);
+     let mut c=CycleCpu::new(); c.set_pc(0x9000);
+     let mut state=c.state(); state.sp=0xFA; c.restore_state(state);
+     for _ in 0..6 { c.clock(&mut b).unwrap(); }
+     assert_eq!(c.state().pc,0x1234);
+     assert_eq!(c.state().sp,0xFD);
+     assert_ne!(c.state().p & flags::CARRY,0);
+     assert_eq!(c.state().p & flags::BREAK,0);
+     assert_ne!(c.state().p & flags::UNUSED,0);
+ }
+
+ #[test]
+ fn pha_and_pla_round_trip_accumulator() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0x48); // PHA
+     b.m.insert(0x8001,0x68); // PLA
+     let mut c=CycleCpu::new(); c.set_pc(0x8000); c.set_a(0xA5);
+     for _ in 0..3 { c.clock(&mut b).unwrap(); }
+     assert_eq!(c.state().sp,0xFC);
+     assert_eq!(b.m.get(&0x01FD),Some(&0xA5));
+     for _ in 0..4 { c.clock(&mut b).unwrap(); }
+     assert_eq!(c.state().a,0xA5);
+     assert_eq!(c.state().sp,0xFD);
+ }
+
 }
