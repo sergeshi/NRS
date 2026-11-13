@@ -28,9 +28,9 @@ This is an executable foundation, not yet a claim of full 6502/2A03 conformance.
 The following sequences still need implementation before the CPU can be called
 complete:
 
-- Stack and control-flow instructions: BRK, JSR, RTS, RTI, JMP indirect,
-  PHA/PHP/PLA/PLP.
-- Remaining opcode-specific edge cases and exhaustive bus traces for every RMW addressing form.
+- Exact interrupt entry and interrupt polling timing (BRK, stack/control-flow
+  instructions, indirect JMP and stack push/pull microsequences are now present).
+- IRQ/NMI/RESET entry and interrupt polling timing, plus exhaustive external bus-trace validation.
 - Remaining unofficial operations, including unstable bus-value behavior.
 - Exact IRQ/NMI/RESET entry and interrupt polling timing.
 - DMA stalls and interaction with the system scheduler.
