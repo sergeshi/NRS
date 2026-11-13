@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
 
+pub mod cycle;
+pub use cycle::{BusAccess, CpuFault, CycleCpu, CycleCpuState};
+
 //! Opcode metadata and decoder for the Ricoh 2A03 (NES CPU).
 //! The table covers all 256 byte values, including stable and unstable
 //! unofficial opcodes. Cycle counts are base instruction timings; conditional
