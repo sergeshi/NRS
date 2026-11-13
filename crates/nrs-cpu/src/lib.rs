@@ -28,6 +28,35 @@ pub enum AddressingMode {
 }
 
 impl AddressingMode {
+    // Short names used by the canonical opcode matrix below.
+    // These are associated constants, not additional addressing modes.
+    #[allow(non_upper_case_globals)]
+    pub const Imp: Self = Self::Implied;
+    #[allow(non_upper_case_globals)]
+    pub const Acc: Self = Self::Accumulator;
+    #[allow(non_upper_case_globals)]
+    pub const Imm: Self = Self::Immediate;
+    #[allow(non_upper_case_globals)]
+    pub const Zp: Self = Self::ZeroPage;
+    #[allow(non_upper_case_globals)]
+    pub const ZpX: Self = Self::ZeroPageX;
+    #[allow(non_upper_case_globals)]
+    pub const ZpY: Self = Self::ZeroPageY;
+    #[allow(non_upper_case_globals)]
+    pub const Abs: Self = Self::Absolute;
+    #[allow(non_upper_case_globals)]
+    pub const AbsX: Self = Self::AbsoluteX;
+    #[allow(non_upper_case_globals)]
+    pub const AbsY: Self = Self::AbsoluteY;
+    #[allow(non_upper_case_globals)]
+    pub const Ind: Self = Self::Indirect;
+    #[allow(non_upper_case_globals)]
+    pub const IndX: Self = Self::IndexedIndirect;
+    #[allow(non_upper_case_globals)]
+    pub const IndY: Self = Self::IndirectIndexed;
+    #[allow(non_upper_case_globals)]
+    pub const Rel: Self = Self::Relative;
+
     pub const fn instruction_bytes(self) -> u8 {
         match self {
             Self::Implied | Self::Accumulator => 1,
