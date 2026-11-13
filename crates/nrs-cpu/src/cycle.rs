@@ -92,9 +92,6 @@ impl CycleCpu {
         if self.state.halted{return Err(CpuFault::Jammed{opcode:self.state.opcode});}
         self.state.cycles=self.state.cycles.wrapping_add(1);
         if self.state.phase==0 {
-            if self.state.nmi_pending || (self.state.irq_line&&self.state.p&flags::INTERRUPT_DISABLE==0){
-                self.state.cycles-=1;return Err(CpuFault::InterruptSequencePending);
-            }
             let (v,a)=self.fetch(b);self.state.opcode=v;self.state.phase=1;
             if decode(v).jams_cpu{self.state.halted=true;}return Ok(a);
         }
