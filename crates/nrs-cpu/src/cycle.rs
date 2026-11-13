@@ -60,7 +60,7 @@ impl CycleCpu {
     fn finish(&mut self){self.state.phase=0;self.state.crossed_page=false;}
     fn nz(&mut self,v:u8){self.state.p=(self.state.p&!(flags::NEGATIVE|flags::ZERO))|if v==0{flags::ZERO}else{0}|(v&flags::NEGATIVE)|flags::UNUSED;}
     fn compare(&mut self,a:u8,b:u8){let r=a.wrapping_sub(b);self.state.p=(self.state.p&!(flags::CARRY|flags::ZERO|flags::NEGATIVE))|if a>=b{flags::CARRY}else{0}|if a==b{flags::ZERO}else{0}|(r&flags::NEGATIVE)|flags::UNUSED;}
-    fn adc(&mut self,v:u8){let a=self.state.a;let sum=u16::from(a)+u16::from(v)+u16::from(self.state.p&flags::CARRY!=0);let r=sum as u8;
+    fn adc(&mut self,v:u8){let a=self.state.a;let sum=u16::from(a)+u16::from(v)+if self.state.p&flags::CARRY!=0 { 1 } else { 0 };let r=sum as u8;
         self.state.p&=!(flags::CARRY|flags::OVERFLOW);if sum>255{self.state.p|=flags::CARRY;}
         if (!(a^v)&(a^r)&0x80)!=0{self.state.p|=flags::OVERFLOW;}self.state.a=r;self.nz(r);}
     fn apply(&mut self,m:Mnemonic,v:u8)->Result<(),CpuFault>{use Mnemonic::*;match m{
