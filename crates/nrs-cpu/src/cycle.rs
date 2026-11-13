@@ -72,8 +72,16 @@ impl CycleCpu {
         ADC=>self.adc(v), SBC=>self.adc(!v), AND=>{self.state.a&=v;self.nz(self.state.a)},
         ORA=>{self.state.a|=v;self.nz(self.state.a)}, EOR=>{self.state.a^=v;self.nz(self.state.a)},
         LDA=>{self.state.a=v;self.nz(v)},LDX=>{self.state.x=v;self.nz(v)},LDY=>{self.state.y=v;self.nz(v)},
-        LAX=>{self.state.a=v;self.state.x=v;self.nz(v)},CMP=>self.compare(self.state.a,v),
-        CPX=>self.compare(self.state.x,v),CPY=>self.compare(self.state.y,v),
+        LAX=>{if self.state.opcode==0xAB{return Err(CpuFault::UnsupportedInstruction{opcode:self.state.opcode});}self.state.a=v;self.state.x=v;self.nz(v)},
+        LAS=>{let value=v&self.state.sp;self.state.a=value;self.state.x=value;self.state.sp=value;self.nz(value)},
+        ANC=>{self.state.a&=v;self.nz(self.state.a);self.state.p=(self.state.p&!flags::CARRY)|if self.state.a&0x80!=0{flags::CARRY}else{0};},
+        ALR=>{let value=self.state.a&v;self.state.p=(self.state.p&!flags::CARRY)|(value&1);self.state.a=value>>1;self.nz(self.state.a);},
+        ARR=>{let value=self.state.a&v;let result=(value>>1)|if self.state.p&flags::CARRY!=0{0x80}else{0};self.state.a=result;
+            self.state.p=(self.state.p&!(flags::CARRY|flags::OVERFLOW))|if result&0x40!=0{flags::CARRY}else{0}|
+                if ((result>>6)^(result>>5))&1!=0{flags::OVERFLOW}else{0};self.nz(result);},
+        AXS=>{let lhs=self.state.a&self.state.x;self.state.x=lhs.wrapping_sub(v);
+            self.state.p=(self.state.p&!flags::CARRY)|if lhs>=v{flags::CARRY}else{0};self.nz(self.state.x);},
+        CMP=>self.compare(self.state.a,v), CPX=>self.compare(self.state.x,v),CPY=>self.compare(self.state.y,v),
         BIT=>{self.state.p=(self.state.p&!(flags::ZERO|flags::NEGATIVE|flags::OVERFLOW))|if self.state.a&v==0{flags::ZERO}else{0}|(v&(flags::NEGATIVE|flags::OVERFLOW))|flags::UNUSED;},
         NOP=>{},_=>return Err(CpuFault::UnsupportedInstruction{opcode:self.state.opcode})}Ok(())}
     fn store_value(&self,m:Mnemonic)->Result<u8,CpuFault>{match m{Mnemonic::STA=>Ok(self.state.a),Mnemonic::STX=>Ok(self.state.x),Mnemonic::STY=>Ok(self.state.y),Mnemonic::SAX=>Ok(self.state.a&self.state.x),_=>Err(CpuFault::UnsupportedInstruction{opcode:self.state.opcode})}}
