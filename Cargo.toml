@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/nrs-core",
     "crates/nrs-cpu",
+    "crates/nrs-rom",
 ]
 
 [workspace.package]
