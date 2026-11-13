@@ -531,4 +531,34 @@ mod tests{
      assert_eq!(c.state().sp,0xFD);
  }
 
+
+ #[test]
+ fn irq_entry_is_seven_bus_cycles_and_pushes_b_clear_status() {
+     let mut b=Ram::default();
+     b.m.insert(0xFFFE,0x00); b.m.insert(0xFFFF,0x90);
+     let mut c=CycleCpu::new(); c.set_pc(0x8123); c.set_irq_line(true);
+     let mut state=c.state(); state.p &= !flags::INTERRUPT_DISABLE; c.restore_state(state);
+     let trace: Vec<_>=(0..7).map(|_|c.clock(&mut b).unwrap()).collect();
+     assert_eq!(trace[0],BusAccess::Read{address:0x8123,value:0});
+     assert_eq!(trace[1],BusAccess::Read{address:0x8123,value:0});
+     assert_eq!(trace[2],BusAccess::Write{address:0x01FD,value:0x81});
+     assert_eq!(trace[3],BusAccess::Write{address:0x01FC,value:0x23});
+     assert_eq!(trace[4],BusAccess::Write{address:0x01FB,value:flags::UNUSED});
+     assert_eq!(trace[5],BusAccess::Read{address:0xFFFE,value:0x00});
+     assert_eq!(trace[6],BusAccess::Read{address:0xFFFF,value:0x90});
+     assert_eq!(c.state().pc,0x9000);
+     assert_ne!(c.state().p & flags::INTERRUPT_DISABLE,0);
+ }
+
+ #[test]
+ fn nmi_has_priority_over_irq_and_uses_nmi_vector() {
+     let mut b=Ram::default();
+     b.m.insert(0xFFFA,0x00); b.m.insert(0xFFFB,0xA0);
+     let mut c=CycleCpu::new(); c.set_pc(0x8000); c.set_irq_line(true); c.request_nmi();
+     for _ in 0..7 { c.clock(&mut b).unwrap(); }
+     assert_eq!(c.state().pc,0xA000);
+     assert!(!c.state().nmi_pending);
+     assert_eq!(c.state().interrupt_kind,0);
+ }
+
 }
