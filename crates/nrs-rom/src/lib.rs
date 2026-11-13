@@ -91,13 +91,6 @@ impl fmt::Display for RomError {
 
 impl std::error::Error for RomError {}
 
-fn checked_slice<'a>(data: &'a [u8], cursor: &mut usize, len: usize) -> Result<&'a [u8], RomError> {
-    let end = cursor.checked_add(len).ok_or(RomError::SizeOverflow)?;
-    let slice = data.get(*cursor..end).ok_or(RomError::SizeOverflow)?;
-    *cursor = end;
-    Ok(slice)
-}
-
 fn nes2_rom_size(lsb: u8, ms_nibble: u8, unit: usize) -> Result<usize, RomError> {
     if ms_nibble != 0x0F {
         let count = (usize::from(ms_nibble) << 8) | usize::from(lsb);
@@ -265,6 +258,7 @@ mod tests {
     #[test]
     fn parses_nes2_extended_mapper_and_submapper() {
         let mut data = ines(1, 0);
+        data[6] = 0x10; // mapper low nibble 1
         data[7] = 0x08;
         data[8] = 0xA5; // submapper 10, mapper extension 5
         data.extend(vec![0xEA; 16 * 1024]);
