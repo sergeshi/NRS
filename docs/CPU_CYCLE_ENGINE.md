@@ -21,6 +21,7 @@ available through `CycleCpuState` and can be restored mid-instruction.
   SLO/RLA/SRE/RRA/DCP/ISC for the implemented memory addressing forms.
 - Stack operations PHA/PHP/PLA/PLP, JSR/RTS/RTI, BRK, JMP absolute and JMP
   indirect (including the original 6502 indirect-page-wrap behavior).
+- Seven-cycle IRQ/NMI entry, NMI priority, vector selection and B-clear status push.
 - KIL/JAM latch and explicit fault reporting for unsupported sequences.
 - Snapshot/restore in the middle of an instruction.
 
@@ -29,7 +30,7 @@ available through `CycleCpuState` and can be restored mid-instruction.
 This is an executable foundation, not a claim of full 6502/2A03 conformance.
 The following work remains before the CPU can be considered complete:
 
-- IRQ/NMI entry, interrupt polling latency, and exact interrupt edge behavior.
+- Exact IRQ polling latency and edge behavior around CLI/SEI/PLP/RTI.
 - RESET sequence and hardware-accurate power-on/reset state.
 - Remaining unofficial instructions and unstable bus-value/address behavior
   (including XAA, AHX, SHX, SHY, TAS and related opcodes).
