@@ -89,7 +89,7 @@ impl TimingProfile {
 pub struct PpuClockDivider {
     numerator: u16,
     denominator: u16,
-    accumulator: u16,
+    accumulator: u32,
 }
 
 impl PpuClockDivider {
@@ -109,22 +109,22 @@ impl PpuClockDivider {
 
     /// Advances one CPU tick and returns the number of PPU ticks due.
     pub fn advance_cpu_tick(&mut self) -> u16 {
-        self.accumulator += self.numerator;
-        let ticks = self.accumulator / self.denominator;
-        self.accumulator %= self.denominator;
+        self.accumulator += u32::from(self.numerator);
+        let ticks = self.accumulator / u32::from(self.denominator);
+        self.accumulator %= u32::from(self.denominator);
         ticks
     }
 
     /// Returns the fractional phase currently held by the divider.
-    pub const fn phase(&self) -> u16 {
+    pub const fn phase(&self) -> u32 {
         self.accumulator
     }
 
     /// Restores a previously saved fractional phase.
     ///
     /// Returns false when the phase is outside this divider's denominator.
-    pub fn restore_phase(&mut self, phase: u16) -> bool {
-        if phase >= self.denominator {
+    pub fn restore_phase(&mut self, phase: u32) -> bool {
+        if phase >= u32::from(self.denominator) {
             return false;
         }
         self.accumulator = phase;
