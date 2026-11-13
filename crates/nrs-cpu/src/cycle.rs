@@ -351,7 +351,7 @@ mod tests{
      assert_eq!(accesses[5],BusAccess::Read{address:0x2100,value:0x10});
      assert_eq!(accesses[6],BusAccess::Write{address:0x2100,value:0x10});
      assert_eq!(accesses[7],BusAccess::Write{address:0x2100,value:0x0F});
-     assert_eq!(c.state().p & flags::CARRY,0);
+     assert_ne!(c.state().p & flags::CARRY,0);
  }
 
 }
