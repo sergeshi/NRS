@@ -8,7 +8,7 @@ use crate::{decode, flags, AddressingMode, CpuBus, Mnemonic, Opcode};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BusAccess { Read { address: u16, value: u8 }, Write { address: u16, value: u8 } }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CpuFault { UnsupportedInstruction { opcode: u8 }, Jammed { opcode: u8 } }
+pub enum CpuFault { UnsupportedInstruction { opcode: u8 }, InterruptSequencePending, Jammed { opcode: u8 } }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind { Read, Write, Implied, Branch, Control }
 
@@ -19,7 +19,7 @@ fn kind(op: &Opcode) -> Kind {
         BCC | BCS | BEQ | BMI | BNE | BPL | BVC | BVS => Kind::Branch,
         BRK | JMP | JSR | RTI | RTS | PHA | PHP | PLA | PLP => Kind::Control,
         CLC | CLD | CLI | CLV | DEX | DEY | INX | INY | SEC | SED | SEI |
-        TAX | TAY | TSX | TXA | TXS | TYA | NOP => Kind::Implied,
+        TAX | TAY | TSX | TXA | TXS | TYA => Kind::Implied,
         _ => match op.mode { AddressingMode::Implied | AddressingMode::Accumulator => Kind::Implied, _ => Kind::Read }
     }
 }
@@ -93,7 +93,7 @@ impl CycleCpu {
         self.state.cycles=self.state.cycles.wrapping_add(1);
         if self.state.phase==0 {
             if self.state.nmi_pending || (self.state.irq_line&&self.state.p&flags::INTERRUPT_DISABLE==0){
-                self.state.cycles-=1;return Err(CpuFault::UnsupportedInstruction{opcode:self.state.opcode});
+                self.state.cycles-=1;return Err(CpuFault::InterruptSequencePending);
             }
             let (v,a)=self.fetch(b);self.state.opcode=v;self.state.phase=1;
             if decode(v).jams_cpu{self.state.halted=true;}return Ok(a);
