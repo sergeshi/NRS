@@ -112,7 +112,9 @@ impl PpuClockDivider {
         self.accumulator += u32::from(self.numerator);
         let ticks = self.accumulator / u32::from(self.denominator);
         self.accumulator %= u32::from(self.denominator);
-        ticks
+        // The accumulator starts below the denominator and adds at most one
+        // u16 numerator, so the quotient cannot exceed u16::MAX.
+        ticks as u16
     }
 
     /// Returns the fractional phase currently held by the divider.
