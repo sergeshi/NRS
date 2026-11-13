@@ -48,7 +48,7 @@ pub struct CycleCpu { state: CycleCpuState }
 impl CycleCpu {
     pub const fn new()->Self { Self { state:CycleCpuState { a:0,x:0,y:0,sp:0xFD,pc:0,
         p:flags::INTERRUPT_DISABLE|flags::UNUSED,opcode:0,phase:0,cycles:0,operand:0,
-        low:0,base:0,effective:0,crossed_page:false,halted:false,nmi_pending:false,irq_line:false,interrupt_kind:0 } } }
+        low:0,base:0,effective:0,crossed_page:false,halted:false,nmi_pending:false,irq_line:false,interrupt_kind:0,reset_pending:false } } }
     pub const fn state(&self)->CycleCpuState { self.state }
     pub fn restore_state(&mut self,mut s:CycleCpuState){s.p|=flags::UNUSED;self.state=s;}
     pub fn set_pc(&mut self,v:u16){self.state.pc=v;}
