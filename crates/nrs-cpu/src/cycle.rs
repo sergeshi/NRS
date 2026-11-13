@@ -122,6 +122,82 @@ impl CycleCpu {
         Ok(())
     }
 
+    fn control_cycle<B: CpuBus>(&mut self, b: &mut B, op: Opcode, ph: u8) -> Result<BusAccess, CpuFault> {
+        use Mnemonic::*;
+        let access = match op.mnemonic {
+            JMP => match op.mode {
+                AddressingMode::Absolute => match ph {
+                    1 => { let (v, a) = self.fetch(b); self.state.low = v; self.state.phase = 2; a }
+                    _ => { let (v, a) = self.fetch(b); self.state.pc = u16::from_le_bytes([self.state.low, v]); self.finish(); a }
+                },
+                AddressingMode::Indirect => match ph {
+                    1 => { let (v, a) = self.fetch(b); self.state.low = v; self.state.phase = 2; a }
+                    2 => { let (v, a) = self.fetch(b); self.state.base = u16::from_le_bytes([self.state.low, v]); self.state.phase = 3; a }
+                    3 => { let a = self.read(b, self.state.base); if let BusAccess::Read { value, .. } = a { self.state.low = value; } self.state.phase = 4; a }
+                    _ => {
+                        let high_addr = (self.state.base & 0xFF00) | (self.state.base.wrapping_add(1) & 0x00FF);
+                        let a = self.read(b, high_addr);
+                        if let BusAccess::Read { value, .. } = a { self.state.pc = u16::from_le_bytes([self.state.low, value]); }
+                        self.finish(); a
+                    }
+                },
+                _ => return Err(CpuFault::UnsupportedInstruction { opcode: self.state.opcode }),
+            },
+            JSR => match ph {
+                1 => { let (v, a) = self.fetch(b); self.state.low = v; self.state.phase = 2; a }
+                2 => { let a = self.read(b, 0x0100 | u16::from(self.state.sp)); self.state.phase = 3; a }
+                3 => { let a = self.write(b, 0x0100 | u16::from(self.state.sp), (self.state.pc >> 8) as u8); self.state.sp = self.state.sp.wrapping_sub(1); self.state.phase = 4; a }
+                4 => { let a = self.write(b, 0x0100 | u16::from(self.state.sp), self.state.pc as u8); self.state.sp = self.state.sp.wrapping_sub(1); self.state.phase = 5; a }
+                _ => { let (v, a) = self.fetch(b); self.state.pc = u16::from_le_bytes([self.state.low, v]); self.finish(); a }
+            },
+            RTS => match ph {
+                1 => { let a = self.read(b, self.state.pc); self.state.phase = 2; a }
+                2 => { let a = self.read(b, 0x0100 | u16::from(self.state.sp)); self.state.sp = self.state.sp.wrapping_add(1); self.state.phase = 3; a }
+                3 => { let a = self.read(b, 0x0100 | u16::from(self.state.sp)); if let BusAccess::Read { value, .. } = a { self.state.low = value; } self.state.sp = self.state.sp.wrapping_add(1); self.state.phase = 4; a }
+                4 => { let a = self.read(b, 0x0100 | u16::from(self.state.sp)); if let BusAccess::Read { value, .. } = a { self.state.base = u16::from_le_bytes([self.state.low, value]); } self.state.phase = 5; a }
+                _ => { let a = self.read(b, self.state.base); self.state.pc = self.state.base.wrapping_add(1); self.finish(); a }
+            },
+            RTI => match ph {
+                1 => { let a = self.read(b, self.state.pc); self.state.phase = 2; a }
+                2 => { let a = self.read(b, 0x0100 | u16::from(self.state.sp)); self.state.sp = self.state.sp.wrapping_add(1); self.state.phase = 3; a }
+                3 => { let a = self.read(b, 0x0100 | u16::from(self.state.sp)); if let BusAccess::Read { value, .. } = a { self.state.p = (value & !flags::BREAK) | flags::UNUSED; } self.state.sp = self.state.sp.wrapping_add(1); self.state.phase = 4; a }
+                4 => { let a = self.read(b, 0x0100 | u16::from(self.state.sp)); if let BusAccess::Read { value, .. } = a { self.state.low = value; } self.state.sp = self.state.sp.wrapping_add(1); self.state.phase = 5; a }
+                _ => { let a = self.read(b, 0x0100 | u16::from(self.state.sp)); if let BusAccess::Read { value, .. } = a { self.state.pc = u16::from_le_bytes([self.state.low, value]); } self.finish(); a }
+            },
+            PHA | PHP => match ph {
+                1 => { let a = self.read(b, self.state.pc); self.state.phase = 2; a }
+                _ => {
+                    let value = if op.mnemonic == PHA { self.state.a } else { self.state.p | flags::BREAK | flags::UNUSED };
+                    let a = self.write(b, 0x0100 | u16::from(self.state.sp), value);
+                    self.state.sp = self.state.sp.wrapping_sub(1); self.finish(); a
+                }
+            },
+            PLA | PLP => match ph {
+                1 => { let a = self.read(b, self.state.pc); self.state.phase = 2; a }
+                2 => { let a = self.read(b, 0x0100 | u16::from(self.state.sp)); self.state.phase = 3; a }
+                _ => {
+                    self.state.sp = self.state.sp.wrapping_add(1);
+                    let a = self.read(b, 0x0100 | u16::from(self.state.sp));
+                    if let BusAccess::Read { value, .. } = a {
+                        if op.mnemonic == PLA { self.state.a = value; self.nz(value); }
+                        else { self.state.p = (value & !flags::BREAK) | flags::UNUSED; }
+                    }
+                    self.finish(); a
+                }
+            },
+            BRK => match ph {
+                1 => { let (_, a) = self.fetch(b); self.state.phase = 2; a }
+                2 => { let a = self.write(b, 0x0100 | u16::from(self.state.sp), (self.state.pc >> 8) as u8); self.state.sp = self.state.sp.wrapping_sub(1); self.state.phase = 3; a }
+                3 => { let a = self.write(b, 0x0100 | u16::from(self.state.sp), self.state.pc as u8); self.state.sp = self.state.sp.wrapping_sub(1); self.state.phase = 4; a }
+                4 => { let a = self.write(b, 0x0100 | u16::from(self.state.sp), self.state.p | flags::BREAK | flags::UNUSED); self.state.sp = self.state.sp.wrapping_sub(1); self.state.p |= flags::INTERRUPT_DISABLE; self.state.phase = 5; a }
+                5 => { let a = self.read(b, 0xFFFE); if let BusAccess::Read { value, .. } = a { self.state.low = value; } self.state.phase = 6; a }
+                _ => { let a = self.read(b, 0xFFFF); if let BusAccess::Read { value, .. } = a { self.state.pc = u16::from_le_bytes([self.state.low, value]); } self.finish(); a }
+            },
+            _ => return Err(CpuFault::UnsupportedInstruction { opcode: self.state.opcode }),
+        };
+        Ok(access)
+    }
+
     fn rmw_cycle<B: CpuBus>(&mut self, b: &mut B, op: Opcode, ph: u8) -> Result<BusAccess, CpuFault> {
         let mode = op.mode;
         let access = match mode {
@@ -210,7 +286,7 @@ impl CycleCpu {
                     let a=self.read(b,addr);if ph==2&&self.state.crossed_page{self.state.pc=(old&0xFF00)|(self.state.effective&0xFF);self.state.phase=3;}
                     else{self.state.pc=self.state.effective;self.finish();}Ok(a)}
             }
-            Kind::Control=>Err(CpuFault::UnsupportedInstruction{opcode:self.state.opcode}),
+            Kind::Control=>self.control_cycle(b,op,ph),
             Kind::ReadModifyWrite=>self.rmw_cycle(b,op,ph),
             Kind::Read|Kind::Write=>self.memory_cycle(b,op,ph)
         }
