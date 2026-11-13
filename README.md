@@ -18,11 +18,11 @@ Implemented:
 - Rust workspace foundation and shared NTSC/PAL/Dendy timing profiles.
 - Rational CPU-to-PPU clock divider with snapshotable phase.
 - Ricoh 2A03 256-entry opcode metadata/decoder.
-- Cycle-stepped CPU executor covering common read/write/branch sequences, memory read-modify-write microsequences (including unofficial combined families), stack operations, BRK, JSR/RTS/RTI, JMP indirect and initial seven-cycle IRQ/NMI entry.
+- Cycle-stepped CPU executor covering common read/write/branch sequences, memory read-modify-write microsequences (including unofficial combined families), stack operations, BRK, JSR/RTS/RTI, JMP indirect and seven-cycle IRQ/NMI/RESET entry sequences.
 - iNES 1.0 and NES 2.0 ROM image parser with trainer, mapper/submapper, PRG/CHR and RAM metadata.
 
 Not implemented:
-- Complete 2A03 instruction microsequences, interrupts, DMA and hardware-accurate reset.
+- Remaining 2A03 opcode edge cases, exact interrupt polling latency, DMA and analog-accurate power-on behavior.
 - CPU/PPU/APU buses, PPU rendering/register behavior, mappers and controllers.
 - Machine scheduler, deterministic whole-machine snapshots and timeline.
 - ROM disassembly/analysis, Blueprint IR and graph editor.
