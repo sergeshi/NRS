@@ -347,9 +347,10 @@ mod tests{
      b.m.insert(0x2100,0x10);
      let mut c=CycleCpu::new(); c.set_pc(0x8000); c.set_y(1); c.set_a(0x0F);
      let accesses: Vec<_>=(0..8).map(|_|c.clock(&mut b).unwrap()).collect();
-     assert_eq!(accesses[4],BusAccess::Read{address:0x2100,value:0x10});
-     assert_eq!(accesses[5],BusAccess::Write{address:0x2100,value:0x10});
-     assert_eq!(accesses[6],BusAccess::Write{address:0x2100,value:0x0F});
+     assert_eq!(accesses[4],BusAccess::Read{address:0x2000,value:0x00});
+     assert_eq!(accesses[5],BusAccess::Read{address:0x2100,value:0x10});
+     assert_eq!(accesses[6],BusAccess::Write{address:0x2100,value:0x10});
+     assert_eq!(accesses[7],BusAccess::Write{address:0x2100,value:0x0F});
      assert_eq!(c.state().p & flags::CARRY,0);
  }
 
