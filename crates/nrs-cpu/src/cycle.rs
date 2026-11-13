@@ -34,12 +34,12 @@ pub struct CycleCpuState {
     pub a:u8, pub x:u8, pub y:u8, pub sp:u8, pub pc:u16, pub p:u8,
     pub opcode:u8, pub phase:u8, pub cycles:u64, pub operand:u8,
     pub low:u8, pub base:u16, pub effective:u16, pub crossed_page:bool,
-    pub halted:bool, pub nmi_pending:bool, pub irq_line:bool, pub interrupt_kind:u8,
+    pub halted:bool, pub nmi_pending:bool, pub irq_line:bool, pub interrupt_kind:u8, pub reset_pending:bool,
 }
 impl Default for CycleCpuState {
     fn default()->Self { Self { a:0,x:0,y:0,sp:0xFD,pc:0,p:flags::INTERRUPT_DISABLE|flags::UNUSED,
         opcode:0,phase:0,cycles:0,operand:0,low:0,base:0,effective:0,crossed_page:false,
-        halted:false,nmi_pending:false,irq_line:false,interrupt_kind:0 } }
+        halted:false,nmi_pending:false,irq_line:false,interrupt_kind:0,reset_pending:false } }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -57,6 +57,7 @@ impl CycleCpu {
     pub fn set_y(&mut self,v:u8){self.state.y=v;}
     pub fn set_irq_line(&mut self,v:bool){self.state.irq_line=v;}
     pub fn request_nmi(&mut self){self.state.nmi_pending=true;}
+    pub fn request_reset(&mut self){self.state.reset_pending=true;self.state.halted=false;self.state.phase=0;self.state.interrupt_kind=0;}
 
     fn read<B:CpuBus>(&mut self,b:&mut B,a:u16)->BusAccess { let v=b.read(a);BusAccess::Read{address:a,value:v} }
     fn write<B:CpuBus>(&mut self,b:&mut B,a:u16,v:u8)->BusAccess { b.write(a,v);BusAccess::Write{address:a,value:v} }
@@ -123,15 +124,20 @@ impl CycleCpu {
     }
 
     fn interrupt_cycle<B: CpuBus>(&mut self, b: &mut B, ph: u8) -> Result<BusAccess, CpuFault> {
-        let vector = if self.state.interrupt_kind == 2 { 0xFFFA } else { 0xFFFE };
-        let access = match ph {
+        let vector = match self.state.interrupt_kind { 2 => 0xFFFA, 3 => 0xFFFC, _ => 0xFFFE };
+        let access = if self.state.interrupt_kind == 3 { match ph {
+            1 => { let a = self.read(b, self.state.pc); self.state.phase = 2; a }
+            2 | 3 | 4 => { let a = self.read(b, 0x0100 | u16::from(self.state.sp)); self.state.sp = self.state.sp.wrapping_sub(1); if ph == 4 { self.state.p |= flags::INTERRUPT_DISABLE; self.state.phase = 5; } else { self.state.phase += 1; } a }
+            5 => { let a = self.read(b, vector); if let BusAccess::Read { value, .. } = a { self.state.low = value; } self.state.phase = 6; a }
+            _ => { let a = self.read(b, vector + 1); if let BusAccess::Read { value, .. } = a { self.state.pc = u16::from_le_bytes([self.state.low, value]); } self.state.interrupt_kind = 0; self.finish(); a }
+        }} else { match ph {
             1 => { let a = self.read(b, self.state.pc); self.state.phase = 2; a }
             2 => { let a = self.write(b, 0x0100 | u16::from(self.state.sp), (self.state.pc >> 8) as u8); self.state.sp = self.state.sp.wrapping_sub(1); self.state.phase = 3; a }
             3 => { let a = self.write(b, 0x0100 | u16::from(self.state.sp), self.state.pc as u8); self.state.sp = self.state.sp.wrapping_sub(1); self.state.phase = 4; a }
             4 => { let a = self.write(b, 0x0100 | u16::from(self.state.sp), (self.state.p & !flags::BREAK) | flags::UNUSED); self.state.sp = self.state.sp.wrapping_sub(1); self.state.p |= flags::INTERRUPT_DISABLE; self.state.phase = 5; a }
             5 => { let a = self.read(b, vector); if let BusAccess::Read { value, .. } = a { self.state.low = value; } self.state.phase = 6; a }
             _ => { let a = self.read(b, vector + 1); if let BusAccess::Read { value, .. } = a { self.state.pc = u16::from_le_bytes([self.state.low, value]); } self.state.interrupt_kind = 0; self.finish(); a }
-        };
+        }};
         Ok(access)
     }
 
@@ -282,9 +288,13 @@ impl CycleCpu {
 
     /// Executes one bus cycle. It never performs more than one bus read/write.
     pub fn clock<B:CpuBus>(&mut self,b:&mut B)->Result<BusAccess,CpuFault>{
-        if self.state.halted{return Err(CpuFault::Jammed{opcode:self.state.opcode});}
+        if self.state.halted && !self.state.reset_pending{return Err(CpuFault::Jammed{opcode:self.state.opcode});}
         self.state.cycles=self.state.cycles.wrapping_add(1);
         if self.state.phase==0 {
+            if self.state.reset_pending {
+                self.state.reset_pending=false;self.state.nmi_pending=false;self.state.interrupt_kind=3;self.state.phase=1;
+                return Ok(self.read(b,self.state.pc));
+            }
             if self.state.nmi_pending || (self.state.irq_line && self.state.p & flags::INTERRUPT_DISABLE == 0) {
                 self.state.interrupt_kind = if self.state.nmi_pending { 2 } else { 1 };
                 self.state.nmi_pending = false;
