@@ -153,6 +153,24 @@ impl CycleCpu {
                 5 => { self.state.low = self.transform(op.mnemonic, self.state.operand)?; self.state.phase = 6; self.write(b, self.state.effective, self.state.operand) }
                 _ => { let new = self.state.low; let a = self.write(b, self.state.effective, new); self.finish_rmw(op.mnemonic, new)?; self.finish(); a }
             },
+            AddressingMode::IndexedIndirect => match ph {
+                1 => { let (v, a) = self.fetch(b); self.state.operand = v; self.state.phase = 2; a }
+                2 => { let a = self.read(b, u16::from(self.state.operand)); self.state.operand = self.state.operand.wrapping_add(self.state.x); self.state.phase = 3; a }
+                3 => { let addr = u16::from(self.state.operand); let v = b.read(addr); self.state.low = v; self.state.phase = 4; BusAccess::Read { address: addr, value: v } }
+                4 => { let addr = u16::from(self.state.operand.wrapping_add(1)); let v = b.read(addr); self.state.effective = u16::from_le_bytes([self.state.low, v]); self.state.phase = 5; BusAccess::Read { address: addr, value: v } }
+                5 => { let a = self.read(b, self.state.effective); if let BusAccess::Read { value, .. } = a { self.state.operand = value; } self.state.phase = 6; a }
+                6 => { self.state.low = self.transform(op.mnemonic, self.state.operand)?; self.state.phase = 7; self.write(b, self.state.effective, self.state.operand) }
+                _ => { let new = self.state.low; let a = self.write(b, self.state.effective, new); self.finish_rmw(op.mnemonic, new)?; self.finish(); a }
+            },
+            AddressingMode::IndirectIndexed => match ph {
+                1 => { let (v, a) = self.fetch(b); self.state.operand = v; self.state.phase = 2; a }
+                2 => { let addr = u16::from(self.state.operand); let v = b.read(addr); self.state.low = v; self.state.phase = 3; BusAccess::Read { address: addr, value: v } }
+                3 => { let addr = u16::from(self.state.operand.wrapping_add(1)); let v = b.read(addr); self.state.base = u16::from_le_bytes([self.state.low, v]); self.state.effective = self.state.base.wrapping_add(u16::from(self.state.y)); self.state.phase = 4; BusAccess::Read { address: addr, value: v } }
+                4 => { let addr = (self.state.base & 0xFF00) | (self.state.effective & 0x00FF); self.state.phase = 5; self.read(b, addr) }
+                5 => { let a = self.read(b, self.state.effective); if let BusAccess::Read { value, .. } = a { self.state.operand = value; } self.state.phase = 6; a }
+                6 => { self.state.low = self.transform(op.mnemonic, self.state.operand)?; self.state.phase = 7; self.write(b, self.state.effective, self.state.operand) }
+                _ => { let new = self.state.low; let a = self.write(b, self.state.effective, new); self.finish_rmw(op.mnemonic, new)?; self.finish(); a }
+            },
             _ => return Err(CpuFault::UnsupportedInstruction { opcode: self.state.opcode }),
         };
         Ok(access)
@@ -300,6 +318,39 @@ mod tests{
      assert_eq!(c.state().a,0);
      assert_ne!(c.state().p & flags::CARRY,0);
      assert_ne!(c.state().p & flags::ZERO,0);
+ }
+
+
+ #[test]
+ fn unofficial_slo_indexed_indirect_uses_eight_cycles() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0x03); // SLO ($20,X)
+     b.m.insert(0x8001,0x20);
+     b.m.insert(0x0021,0x00);
+     b.m.insert(0x0022,0x30);
+     b.m.insert(0x3000,0x81);
+     let mut c=CycleCpu::new(); c.set_pc(0x8000); c.set_x(1); c.set_a(0x01);
+     let accesses: Vec<_>=(0..8).map(|_|c.clock(&mut b).unwrap()).collect();
+     assert_eq!(accesses[5],BusAccess::Read{address:0x3000,value:0x81});
+     assert_eq!(accesses[6],BusAccess::Write{address:0x3000,value:0x81});
+     assert_eq!(accesses[7],BusAccess::Write{address:0x3000,value:0x02});
+     assert_eq!(c.state().a,0x03);
+ }
+
+ #[test]
+ fn unofficial_dcp_indirect_indexed_uses_eight_cycles() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0xD3); // DCP ($20),Y
+     b.m.insert(0x8001,0x20);
+     b.m.insert(0x0020,0xFF);
+     b.m.insert(0x0021,0x20);
+     b.m.insert(0x2100,0x10);
+     let mut c=CycleCpu::new(); c.set_pc(0x8000); c.set_y(1); c.set_a(0x0F);
+     let accesses: Vec<_>=(0..8).map(|_|c.clock(&mut b).unwrap()).collect();
+     assert_eq!(accesses[4],BusAccess::Read{address:0x2100,value:0x10});
+     assert_eq!(accesses[5],BusAccess::Write{address:0x2100,value:0x10});
+     assert_eq!(accesses[6],BusAccess::Write{address:0x2100,value:0x0F});
+     assert_eq!(c.state().p & flags::CARRY,0);
  }
 
 }
