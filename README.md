@@ -18,7 +18,7 @@ Implemented:
 - Rust workspace foundation and shared NTSC/PAL/Dendy timing profiles.
 - Rational CPU-to-PPU clock divider with snapshotable phase.
 - Ricoh 2A03 256-entry opcode metadata/decoder.
-- Initial cycle-stepped CPU executor for a subset of read, write, implied and branch instructions.
+- Cycle-stepped CPU executor covering common read/write/branch sequences and memory read-modify-write microsequences, including unofficial combined RMW families for implemented addressing modes.
 - iNES 1.0 and NES 2.0 ROM image parser with trainer, mapper/submapper, PRG/CHR and RAM metadata.
 
 Not implemented:
