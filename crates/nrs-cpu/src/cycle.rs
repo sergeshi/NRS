@@ -1,8 +1,8 @@
 //! Cycle-stepped Ricoh 2A03 execution engine.
 //! One call to clock performs one externally visible CPU bus access.
-//! This module implements regular read/write addressing sequences and branches.
-//! Complex stack/control and read-modify-write sequences return explicit faults
-//! until their exact bus-cycle microprograms are added.
+//! The executor implements explicit bus-cycle microprograms for the supported
+//! instruction families. Unsupported opcodes return a fault rather than being
+//! approximated as instruction-at-once execution.
 use crate::{decode, flags, AddressingMode, CpuBus, Mnemonic, Opcode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -317,7 +317,7 @@ impl CycleCpu {
         }
         let op=*decode(self.state.opcode);let ph=self.state.phase;
         match kind(&op){
-            Kind::Implied=>{let (_,a)=self.fetch(b);self.implied(op.mnemonic)?;self.finish();Ok(a)}
+            Kind::Implied=>{let a=self.read(b,self.state.pc);self.implied(op.mnemonic)?;self.finish();Ok(a)}
             Kind::Branch=>{
                 if ph==1{let(v,a)=self.fetch(b);self.state.operand=v;if !self.branch(op.mnemonic){self.finish();}
                     else{self.state.base=self.state.pc;self.state.effective=self.state.pc.wrapping_add((v as i8 as i16) as u16);
@@ -382,6 +382,27 @@ mod tests{
  fn write(&mut self,a:u16,v:u8){self.m.insert(a,v);self.log.push(BusAccess::Write{address:a,value:v});}}
  #[test]fn lda_immediate_is_two_bus_cycles(){let mut b=Ram::default();b.m.insert(0x8000,0xA9);b.m.insert(0x8001,0x42);let mut c=CycleCpu::new();c.set_pc(0x8000);
  c.clock(&mut b).unwrap();assert_eq!(c.state().phase,1);c.clock(&mut b).unwrap();assert_eq!(c.state().a,0x42);assert_eq!(c.state().cycles,2);assert_eq!(c.state().phase,0);}
+ #[test]
+ fn implied_instruction_dummy_read_does_not_increment_pc() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0xE8); // INX
+     b.m.insert(0x8001,0xA9); // LDA #$42 must execute next
+     b.m.insert(0x8002,0x42);
+     let mut c=CycleCpu::new();
+     c.set_pc(0x8000);
+
+     c.clock(&mut b).unwrap(); // opcode fetch
+     let dummy = c.clock(&mut b).unwrap();
+     assert_eq!(dummy,BusAccess::Read{address:0x8001,value:0xA9});
+     assert_eq!(c.state().pc,0x8001);
+     assert_eq!(c.state().x,1);
+
+     c.clock(&mut b).unwrap();
+     c.clock(&mut b).unwrap();
+     assert_eq!(c.state().a,0x42);
+     assert_eq!(c.state().pc,0x8003);
+ }
+
  #[test]fn zero_page_sta_writes_on_third_cycle(){let mut b=Ram::default();b.m.insert(0x8000,0x85);b.m.insert(0x8001,0x10);let mut c=CycleCpu::new();c.set_pc(0x8000);c.set_a(0x77);
  c.clock(&mut b).unwrap();c.clock(&mut b).unwrap();assert_eq!(c.clock(&mut b).unwrap(),BusAccess::Write{address:0x10,value:0x77});}
  #[test]fn absolute_indexed_read_has_page_cross_cycle(){let mut b=Ram::default();b.m.insert(0x8000,0xBD);b.m.insert(0x8001,0xFF);b.m.insert(0x8002,0x20);b.m.insert(0x2100,0x66);
