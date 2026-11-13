@@ -571,4 +571,37 @@ mod tests{
      assert_eq!(c.state().interrupt_kind,0);
  }
 
+
+ #[test]
+ fn reset_uses_seven_cycles_reads_stack_and_loads_reset_vector() {
+     let mut b=Ram::default();
+     b.m.insert(0xFFFC,0x00); b.m.insert(0xFFFD,0xC0);
+     let mut c=CycleCpu::new(); c.set_pc(0x8123); c.request_reset();
+     let trace: Vec<_>=(0..7).map(|_|c.clock(&mut b).unwrap()).collect();
+     assert_eq!(trace[0],BusAccess::Read{address:0x8123,value:0});
+     assert_eq!(trace[1],BusAccess::Read{address:0x8123,value:0});
+     assert_eq!(trace[2],BusAccess::Read{address:0x01FD,value:0});
+     assert_eq!(trace[3],BusAccess::Read{address:0x01FC,value:0});
+     assert_eq!(trace[4],BusAccess::Read{address:0x01FB,value:0});
+     assert_eq!(trace[5],BusAccess::Read{address:0xFFFC,value:0x00});
+     assert_eq!(trace[6],BusAccess::Read{address:0xFFFD,value:0xC0});
+     assert_eq!(c.state().pc,0xC000);
+     assert_eq!(c.state().sp,0xFA);
+     assert_ne!(c.state().p & flags::INTERRUPT_DISABLE,0);
+ }
+
+ #[test]
+ fn reset_releases_the_cpu_from_kil_jam() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0x02);
+     b.m.insert(0xFFFC,0x00); b.m.insert(0xFFFD,0x90);
+     let mut c=CycleCpu::new(); c.set_pc(0x8000);
+     c.clock(&mut b).unwrap();
+     assert!(matches!(c.clock(&mut b),Err(CpuFault::Jammed{..})));
+     c.request_reset();
+     for _ in 0..7 { c.clock(&mut b).unwrap(); }
+     assert_eq!(c.state().pc,0x9000);
+     assert!(!c.state().halted);
+ }
+
 }
