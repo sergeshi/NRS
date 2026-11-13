@@ -166,10 +166,10 @@ impl CycleCpu {
         TAX=>{self.state.x=self.state.a;self.nz(self.state.x)},TAY=>{self.state.y=self.state.a;self.nz(self.state.y)},
         TSX=>{self.state.x=self.state.sp;self.nz(self.state.x)},TXA=>{self.state.a=self.state.x;self.nz(self.state.a)},
         TXS=>self.state.sp=self.state.x,TYA=>{self.state.a=self.state.y;self.nz(self.state.a)},
-        ASL=>{self.state.a=self.transform(ASL,self.state.a)?;self.nz(self.state.a)},
-        LSR=>{self.state.a=self.transform(LSR,self.state.a)?;self.nz(self.state.a)},
-        ROL=>{self.state.a=self.transform(ROL,self.state.a)?;self.nz(self.state.a)},
-        ROR=>{self.state.a=self.transform(ROR,self.state.a)?;self.nz(self.state.a)},
+        ASL=>{let value=self.state.a;let result=self.transform(ASL,value)?;self.state.a=result;self.nz(result)},
+        LSR=>{let value=self.state.a;let result=self.transform(LSR,value)?;self.state.a=result;self.nz(result)},
+        ROL=>{let value=self.state.a;let result=self.transform(ROL,value)?;self.state.a=result;self.nz(result)},
+        ROR=>{let value=self.state.a;let result=self.transform(ROR,value)?;self.state.a=result;self.nz(result)},
         NOP=>{},
         _=>return Err(CpuFault::UnsupportedInstruction{opcode:self.state.opcode})}self.state.p|=flags::UNUSED;Ok(())}
 
@@ -254,4 +254,52 @@ mod tests{
  let mut c=CycleCpu::new();c.set_pc(0x8000);c.set_x(1);for _ in 0..5{c.clock(&mut b).unwrap();}assert_eq!(c.state().a,0x66);assert_eq!(c.state().cycles,5);}
  #[test]fn snapshot_resumes_mid_instruction(){let mut b=Ram::default();b.m.insert(0x9000,0xA9);b.m.insert(0x9001,0x31);let mut c=CycleCpu::new();c.set_pc(0x9000);c.clock(&mut b).unwrap();
  let mut resumed=CycleCpu::new();resumed.restore_state(c.state());resumed.clock(&mut b).unwrap();assert_eq!(resumed.state().a,0x31);assert_eq!(resumed.state().phase,0);}
+
+ #[test]
+ fn zero_page_asl_performs_read_old_write_and_write_new() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0x06); // ASL $10
+     b.m.insert(0x8001,0x10);
+     b.m.insert(0x0010,0x81);
+     let mut c=CycleCpu::new(); c.set_pc(0x8000);
+     let accesses: Vec<_>=(0..5).map(|_|c.clock(&mut b).unwrap()).collect();
+     assert_eq!(accesses, vec![
+         BusAccess::Read{address:0x8000,value:0x06},
+         BusAccess::Read{address:0x8001,value:0x10},
+         BusAccess::Read{address:0x0010,value:0x81},
+         BusAccess::Write{address:0x0010,value:0x81},
+         BusAccess::Write{address:0x0010,value:0x02},
+     ]);
+     assert_eq!(b.m.get(&0x0010),Some(&0x02));
+     assert_ne!(c.state().p & flags::CARRY,0);
+     assert_eq!(c.state().phase,0);
+ }
+
+ #[test]
+ fn absolute_x_rmw_has_index_dummy_read_and_two_writes() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0x1E); // ASL $20FF,X
+     b.m.insert(0x8001,0xFF);
+     b.m.insert(0x8002,0x20);
+     b.m.insert(0x2000,0x00);
+     b.m.insert(0x2100,0x40);
+     let mut c=CycleCpu::new(); c.set_pc(0x8000); c.set_x(1);
+     let accesses: Vec<_>=(0..7).map(|_|c.clock(&mut b).unwrap()).collect();
+     assert_eq!(accesses[3],BusAccess::Read{address:0x2000,value:0x00});
+     assert_eq!(accesses[4],BusAccess::Read{address:0x2100,value:0x40});
+     assert_eq!(accesses[5],BusAccess::Write{address:0x2100,value:0x40});
+     assert_eq!(accesses[6],BusAccess::Write{address:0x2100,value:0x80});
+ }
+
+ #[test]
+ fn accumulator_lsr_updates_carry_and_zero_flags() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0x4A);
+     let mut c=CycleCpu::new(); c.set_pc(0x8000); c.set_a(1);
+     c.clock(&mut b).unwrap(); c.clock(&mut b).unwrap();
+     assert_eq!(c.state().a,0);
+     assert_ne!(c.state().p & flags::CARRY,0);
+     assert_ne!(c.state().p & flags::ZERO,0);
+ }
+
 }
