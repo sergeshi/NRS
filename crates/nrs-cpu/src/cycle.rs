@@ -1,0 +1,677 @@
+//! Cycle-stepped Ricoh 2A03 execution engine.
+//! One call to clock performs one externally visible CPU bus access.
+//! The executor implements explicit bus-cycle microprograms for the supported
+//! instruction families. Unsupported opcodes return a fault rather than being
+//! approximated as instruction-at-once execution.
+use crate::{decode, flags, AddressingMode, CpuBus, Mnemonic, Opcode};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BusAccess { Read { address: u16, value: u8 }, Write { address: u16, value: u8 } }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CpuFault { UnsupportedInstruction { opcode: u8 }, InterruptSequencePending, Jammed { opcode: u8 } }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind { Read, Write, ReadModifyWrite, Implied, Branch, Control }
+
+fn kind(op: &Opcode) -> Kind {
+    use Mnemonic::*;
+    if op.mode == AddressingMode::Accumulator {
+        return Kind::Implied;
+    }
+    match op.mnemonic {
+        ASL | LSR | ROL | ROR | INC | DEC | SLO | RLA | SRE | RRA | DCP | ISC => Kind::ReadModifyWrite,
+        STA | STX | STY | SAX => Kind::Write,
+        BCC | BCS | BEQ | BMI | BNE | BPL | BVC | BVS => Kind::Branch,
+        BRK | JMP | JSR | RTI | RTS | PHA | PHP | PLA | PLP => Kind::Control,
+        CLC | CLD | CLI | CLV | DEX | DEY | INX | INY | SEC | SED | SEI |
+        TAX | TAY | TSX | TXA | TXS | TYA => Kind::Implied,
+        _ => match op.mode { AddressingMode::Implied | AddressingMode::Accumulator => Kind::Implied, _ => Kind::Read }
+    }
+}
+
+/// All in-flight values are explicit so a snapshot can resume between bus cycles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CycleCpuState {
+    pub a:u8, pub x:u8, pub y:u8, pub sp:u8, pub pc:u16, pub p:u8,
+    pub opcode:u8, pub phase:u8, pub cycles:u64, pub operand:u8,
+    pub low:u8, pub base:u16, pub effective:u16, pub crossed_page:bool,
+    pub halted:bool, pub nmi_pending:bool, pub irq_line:bool, pub interrupt_kind:u8, pub reset_pending:bool,
+}
+impl Default for CycleCpuState {
+    fn default()->Self { Self { a:0,x:0,y:0,sp:0xFD,pc:0,p:flags::INTERRUPT_DISABLE|flags::UNUSED,
+        opcode:0,phase:0,cycles:0,operand:0,low:0,base:0,effective:0,crossed_page:false,
+        halted:false,nmi_pending:false,irq_line:false,interrupt_kind:0,reset_pending:false } }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CycleCpu { state: CycleCpuState }
+
+impl CycleCpu {
+    pub const fn new()->Self { Self { state:CycleCpuState { a:0,x:0,y:0,sp:0xFD,pc:0,
+        p:flags::INTERRUPT_DISABLE|flags::UNUSED,opcode:0,phase:0,cycles:0,operand:0,
+        low:0,base:0,effective:0,crossed_page:false,halted:false,nmi_pending:false,irq_line:false,interrupt_kind:0,reset_pending:false } } }
+    pub const fn state(&self)->CycleCpuState { self.state }
+    pub fn restore_state(&mut self,mut s:CycleCpuState){s.p|=flags::UNUSED;self.state=s;}
+    pub fn set_pc(&mut self,v:u16){self.state.pc=v;}
+    pub fn set_a(&mut self,v:u8){self.state.a=v;}
+    pub fn set_x(&mut self,v:u8){self.state.x=v;}
+    pub fn set_y(&mut self,v:u8){self.state.y=v;}
+    pub fn set_irq_line(&mut self,v:bool){self.state.irq_line=v;}
+    pub fn request_nmi(&mut self){self.state.nmi_pending=true;}
+    pub fn request_reset(&mut self){self.state.reset_pending=true;self.state.halted=false;self.state.phase=0;self.state.interrupt_kind=0;}
+
+    fn read<B:CpuBus>(&mut self,b:&mut B,a:u16)->BusAccess { let v=b.read(a);BusAccess::Read{address:a,value:v} }
+    fn write<B:CpuBus>(&mut self,b:&mut B,a:u16,v:u8)->BusAccess { b.write(a,v);BusAccess::Write{address:a,value:v} }
+    fn fetch<B:CpuBus>(&mut self,b:&mut B)->(u8,BusAccess) { let a=self.state.pc;let v=b.read(a);self.state.pc=self.state.pc.wrapping_add(1);(v,BusAccess::Read{address:a,value:v}) }
+    fn finish(&mut self){self.state.phase=0;self.state.crossed_page=false;}
+    fn nz(&mut self,v:u8){self.state.p=(self.state.p&!(flags::NEGATIVE|flags::ZERO))|if v==0{flags::ZERO}else{0}|(v&flags::NEGATIVE)|flags::UNUSED;}
+    fn compare(&mut self,a:u8,b:u8){let r=a.wrapping_sub(b);self.state.p=(self.state.p&!(flags::CARRY|flags::ZERO|flags::NEGATIVE))|if a>=b{flags::CARRY}else{0}|if a==b{flags::ZERO}else{0}|(r&flags::NEGATIVE)|flags::UNUSED;}
+    fn adc(&mut self,v:u8){let a=self.state.a;let sum=u16::from(a)+u16::from(v)+if self.state.p&flags::CARRY!=0 { 1 } else { 0 };let r=sum as u8;
+        self.state.p&=!(flags::CARRY|flags::OVERFLOW);if sum>255{self.state.p|=flags::CARRY;}
+        if (!(a^v)&(a^r)&0x80)!=0{self.state.p|=flags::OVERFLOW;}self.state.a=r;self.nz(r);}
+    fn apply(&mut self,m:Mnemonic,v:u8)->Result<(),CpuFault>{use Mnemonic::*;match m{
+        ADC=>self.adc(v), SBC=>self.adc(!v), AND=>{self.state.a&=v;self.nz(self.state.a)},
+        ORA=>{self.state.a|=v;self.nz(self.state.a)}, EOR=>{self.state.a^=v;self.nz(self.state.a)},
+        LDA=>{self.state.a=v;self.nz(v)},LDX=>{self.state.x=v;self.nz(v)},LDY=>{self.state.y=v;self.nz(v)},
+        LAX=>{if self.state.opcode==0xAB{return Err(CpuFault::UnsupportedInstruction{opcode:self.state.opcode});}self.state.a=v;self.state.x=v;self.nz(v)},
+        LAS=>{let value=v&self.state.sp;self.state.a=value;self.state.x=value;self.state.sp=value;self.nz(value)},
+        ANC=>{self.state.a&=v;self.nz(self.state.a);self.state.p=(self.state.p&!flags::CARRY)|if self.state.a&0x80!=0{flags::CARRY}else{0};},
+        ALR=>{let value=self.state.a&v;self.state.p=(self.state.p&!flags::CARRY)|(value&1);self.state.a=value>>1;self.nz(self.state.a);},
+        ARR=>{let value=self.state.a&v;let result=(value>>1)|if self.state.p&flags::CARRY!=0{0x80}else{0};self.state.a=result;
+            self.state.p=(self.state.p&!(flags::CARRY|flags::OVERFLOW))|if result&0x40!=0{flags::CARRY}else{0}|
+                if ((result>>6)^(result>>5))&1!=0{flags::OVERFLOW}else{0};self.nz(result);},
+        AXS=>{let lhs=self.state.a&self.state.x;self.state.x=lhs.wrapping_sub(v);
+            self.state.p=(self.state.p&!flags::CARRY)|if lhs>=v{flags::CARRY}else{0};self.nz(self.state.x);},
+        CMP=>self.compare(self.state.a,v), CPX=>self.compare(self.state.x,v),CPY=>self.compare(self.state.y,v),
+        BIT=>{self.state.p=(self.state.p&!(flags::ZERO|flags::NEGATIVE|flags::OVERFLOW))|if self.state.a&v==0{flags::ZERO}else{0}|(v&(flags::NEGATIVE|flags::OVERFLOW))|flags::UNUSED;},
+        NOP=>{},_=>return Err(CpuFault::UnsupportedInstruction{opcode:self.state.opcode})}Ok(())}
+    fn store_value(&self,m:Mnemonic)->Result<u8,CpuFault>{match m{Mnemonic::STA=>Ok(self.state.a),Mnemonic::STX=>Ok(self.state.x),Mnemonic::STY=>Ok(self.state.y),Mnemonic::SAX=>Ok(self.state.a&self.state.x),_=>Err(CpuFault::UnsupportedInstruction{opcode:self.state.opcode})}}
+    fn branch(&self,m:Mnemonic)->bool{use Mnemonic::*;match m{
+        BCC=>self.state.p&flags::CARRY==0,BCS=>self.state.p&flags::CARRY!=0,
+        BEQ=>self.state.p&flags::ZERO!=0,BNE=>self.state.p&flags::ZERO==0,
+        BMI=>self.state.p&flags::NEGATIVE!=0,BPL=>self.state.p&flags::NEGATIVE==0,
+        BVC=>self.state.p&flags::OVERFLOW==0,BVS=>self.state.p&flags::OVERFLOW!=0,_=>false}}
+    fn transform(&mut self, m: Mnemonic, value: u8) -> Result<u8, CpuFault> {
+        use Mnemonic::*;
+        let carry_in = u8::from(self.state.p & flags::CARRY != 0);
+        let result = match m {
+            ASL | SLO => {
+                self.state.p = (self.state.p & !flags::CARRY) | if value & 0x80 != 0 { flags::CARRY } else { 0 };
+                value.wrapping_shl(1)
+            }
+            LSR | SRE => {
+                self.state.p = (self.state.p & !flags::CARRY) | (value & 1);
+                value >> 1
+            }
+            ROL | RLA => {
+                self.state.p = (self.state.p & !flags::CARRY) | if value & 0x80 != 0 { flags::CARRY } else { 0 };
+                (value << 1) | carry_in
+            }
+            ROR | RRA => {
+                self.state.p = (self.state.p & !flags::CARRY) | (value & 1);
+                (value >> 1) | (carry_in << 7)
+            }
+            INC | ISC => value.wrapping_add(1),
+            DEC | DCP => value.wrapping_sub(1),
+            _ => return Err(CpuFault::UnsupportedInstruction { opcode: self.state.opcode }),
+        };
+        Ok(result)
+    }
+
+    fn finish_rmw(&mut self, m: Mnemonic, value: u8) -> Result<(), CpuFault> {
+        use Mnemonic::*;
+        match m {
+            SLO => { self.state.a |= value; self.nz(self.state.a); }
+            RLA => { self.state.a &= value; self.nz(self.state.a); }
+            SRE => { self.state.a ^= value; self.nz(self.state.a); }
+            RRA => self.adc(value),
+            DCP => self.compare(self.state.a, value),
+            ISC => self.adc(!value),
+            _ => self.nz(value),
+        }
+        Ok(())
+    }
+
+    fn interrupt_cycle<B: CpuBus>(&mut self, b: &mut B, ph: u8) -> Result<BusAccess, CpuFault> {
+        let vector = match self.state.interrupt_kind { 2 => 0xFFFA, 3 => 0xFFFC, _ => 0xFFFE };
+        let access = if self.state.interrupt_kind == 3 { match ph {
+            1 => { let a = self.read(b, self.state.pc); self.state.phase = 2; a }
+            2 | 3 | 4 => { let a = self.read(b, 0x0100 | u16::from(self.state.sp)); self.state.sp = self.state.sp.wrapping_sub(1); if ph == 4 { self.state.p |= flags::INTERRUPT_DISABLE; self.state.phase = 5; } else { self.state.phase += 1; } a }
+            5 => { let a = self.read(b, vector); if let BusAccess::Read { value, .. } = a { self.state.low = value; } self.state.phase = 6; a }
+            _ => { let a = self.read(b, vector + 1); if let BusAccess::Read { value, .. } = a { self.state.pc = u16::from_le_bytes([self.state.low, value]); } self.state.interrupt_kind = 0; self.finish(); a }
+        }} else { match ph {
+            1 => { let a = self.read(b, self.state.pc); self.state.phase = 2; a }
+            2 => { let a = self.write(b, 0x0100 | u16::from(self.state.sp), (self.state.pc >> 8) as u8); self.state.sp = self.state.sp.wrapping_sub(1); self.state.phase = 3; a }
+            3 => { let a = self.write(b, 0x0100 | u16::from(self.state.sp), self.state.pc as u8); self.state.sp = self.state.sp.wrapping_sub(1); self.state.phase = 4; a }
+            4 => { let a = self.write(b, 0x0100 | u16::from(self.state.sp), (self.state.p & !flags::BREAK) | flags::UNUSED); self.state.sp = self.state.sp.wrapping_sub(1); self.state.p |= flags::INTERRUPT_DISABLE; self.state.phase = 5; a }
+            5 => { let a = self.read(b, vector); if let BusAccess::Read { value, .. } = a { self.state.low = value; } self.state.phase = 6; a }
+            _ => { let a = self.read(b, vector + 1); if let BusAccess::Read { value, .. } = a { self.state.pc = u16::from_le_bytes([self.state.low, value]); } self.state.interrupt_kind = 0; self.finish(); a }
+        }};
+        Ok(access)
+    }
+
+    fn control_cycle<B: CpuBus>(&mut self, b: &mut B, op: Opcode, ph: u8) -> Result<BusAccess, CpuFault> {
+        use Mnemonic::*;
+        let access = match op.mnemonic {
+            JMP => match op.mode {
+                AddressingMode::Absolute => match ph {
+                    1 => { let (v, a) = self.fetch(b); self.state.low = v; self.state.phase = 2; a }
+                    _ => { let (v, a) = self.fetch(b); self.state.pc = u16::from_le_bytes([self.state.low, v]); self.finish(); a }
+                },
+                AddressingMode::Indirect => match ph {
+                    1 => { let (v, a) = self.fetch(b); self.state.low = v; self.state.phase = 2; a }
+                    2 => { let (v, a) = self.fetch(b); self.state.base = u16::from_le_bytes([self.state.low, v]); self.state.phase = 3; a }
+                    3 => { let a = self.read(b, self.state.base); if let BusAccess::Read { value, .. } = a { self.state.low = value; } self.state.phase = 4; a }
+                    _ => {
+                        let high_addr = (self.state.base & 0xFF00) | (self.state.base.wrapping_add(1) & 0x00FF);
+                        let a = self.read(b, high_addr);
+                        if let BusAccess::Read { value, .. } = a { self.state.pc = u16::from_le_bytes([self.state.low, value]); }
+                        self.finish(); a
+                    }
+                },
+                _ => return Err(CpuFault::UnsupportedInstruction { opcode: self.state.opcode }),
+            },
+            JSR => match ph {
+                1 => { let (v, a) = self.fetch(b); self.state.low = v; self.state.phase = 2; a }
+                2 => { let a = self.read(b, 0x0100 | u16::from(self.state.sp)); self.state.phase = 3; a }
+                3 => { let a = self.write(b, 0x0100 | u16::from(self.state.sp), (self.state.pc >> 8) as u8); self.state.sp = self.state.sp.wrapping_sub(1); self.state.phase = 4; a }
+                4 => { let a = self.write(b, 0x0100 | u16::from(self.state.sp), self.state.pc as u8); self.state.sp = self.state.sp.wrapping_sub(1); self.state.phase = 5; a }
+                _ => { let (v, a) = self.fetch(b); self.state.pc = u16::from_le_bytes([self.state.low, v]); self.finish(); a }
+            },
+            RTS => match ph {
+                1 => { let a = self.read(b, self.state.pc); self.state.phase = 2; a }
+                2 => { let a = self.read(b, 0x0100 | u16::from(self.state.sp)); self.state.sp = self.state.sp.wrapping_add(1); self.state.phase = 3; a }
+                3 => { let a = self.read(b, 0x0100 | u16::from(self.state.sp)); if let BusAccess::Read { value, .. } = a { self.state.low = value; } self.state.sp = self.state.sp.wrapping_add(1); self.state.phase = 4; a }
+                4 => { let a = self.read(b, 0x0100 | u16::from(self.state.sp)); if let BusAccess::Read { value, .. } = a { self.state.base = u16::from_le_bytes([self.state.low, value]); } self.state.phase = 5; a }
+                _ => { let a = self.read(b, self.state.base); self.state.pc = self.state.base.wrapping_add(1); self.finish(); a }
+            },
+            RTI => match ph {
+                1 => { let a = self.read(b, self.state.pc); self.state.phase = 2; a }
+                2 => { let a = self.read(b, 0x0100 | u16::from(self.state.sp)); self.state.sp = self.state.sp.wrapping_add(1); self.state.phase = 3; a }
+                3 => { let a = self.read(b, 0x0100 | u16::from(self.state.sp)); if let BusAccess::Read { value, .. } = a { self.state.p = (value & !flags::BREAK) | flags::UNUSED; } self.state.sp = self.state.sp.wrapping_add(1); self.state.phase = 4; a }
+                4 => { let a = self.read(b, 0x0100 | u16::from(self.state.sp)); if let BusAccess::Read { value, .. } = a { self.state.low = value; } self.state.sp = self.state.sp.wrapping_add(1); self.state.phase = 5; a }
+                _ => { let a = self.read(b, 0x0100 | u16::from(self.state.sp)); if let BusAccess::Read { value, .. } = a { self.state.pc = u16::from_le_bytes([self.state.low, value]); } self.finish(); a }
+            },
+            PHA | PHP => match ph {
+                1 => { let a = self.read(b, self.state.pc); self.state.phase = 2; a }
+                _ => {
+                    let value = if op.mnemonic == PHA { self.state.a } else { self.state.p | flags::BREAK | flags::UNUSED };
+                    let a = self.write(b, 0x0100 | u16::from(self.state.sp), value);
+                    self.state.sp = self.state.sp.wrapping_sub(1); self.finish(); a
+                }
+            },
+            PLA | PLP => match ph {
+                1 => { let a = self.read(b, self.state.pc); self.state.phase = 2; a }
+                2 => { let a = self.read(b, 0x0100 | u16::from(self.state.sp)); self.state.phase = 3; a }
+                _ => {
+                    self.state.sp = self.state.sp.wrapping_add(1);
+                    let a = self.read(b, 0x0100 | u16::from(self.state.sp));
+                    if let BusAccess::Read { value, .. } = a {
+                        if op.mnemonic == PLA { self.state.a = value; self.nz(value); }
+                        else { self.state.p = (value & !flags::BREAK) | flags::UNUSED; }
+                    }
+                    self.finish(); a
+                }
+            },
+            BRK => match ph {
+                1 => { let (_, a) = self.fetch(b); self.state.phase = 2; a }
+                2 => { let a = self.write(b, 0x0100 | u16::from(self.state.sp), (self.state.pc >> 8) as u8); self.state.sp = self.state.sp.wrapping_sub(1); self.state.phase = 3; a }
+                3 => { let a = self.write(b, 0x0100 | u16::from(self.state.sp), self.state.pc as u8); self.state.sp = self.state.sp.wrapping_sub(1); self.state.phase = 4; a }
+                4 => { let a = self.write(b, 0x0100 | u16::from(self.state.sp), self.state.p | flags::BREAK | flags::UNUSED); self.state.sp = self.state.sp.wrapping_sub(1); self.state.p |= flags::INTERRUPT_DISABLE; self.state.phase = 5; a }
+                5 => { let a = self.read(b, 0xFFFE); if let BusAccess::Read { value, .. } = a { self.state.low = value; } self.state.phase = 6; a }
+                _ => { let a = self.read(b, 0xFFFF); if let BusAccess::Read { value, .. } = a { self.state.pc = u16::from_le_bytes([self.state.low, value]); } self.finish(); a }
+            },
+            _ => return Err(CpuFault::UnsupportedInstruction { opcode: self.state.opcode }),
+        };
+        Ok(access)
+    }
+
+    fn rmw_cycle<B: CpuBus>(&mut self, b: &mut B, op: Opcode, ph: u8) -> Result<BusAccess, CpuFault> {
+        let mode = op.mode;
+        let access = match mode {
+            AddressingMode::ZeroPage => match ph {
+                1 => { let (v, a) = self.fetch(b); self.state.effective = u16::from(v); self.state.phase = 2; a }
+                2 => { let a = self.read(b, self.state.effective); if let BusAccess::Read { value, .. } = a { self.state.operand = value; } self.state.phase = 3; a }
+                3 => { let new = self.transform(op.mnemonic, self.state.operand)?; self.state.low = new; self.state.phase = 4; self.write(b, self.state.effective, self.state.operand) }
+                _ => { let new = self.state.low; let a = self.write(b, self.state.effective, new); self.finish_rmw(op.mnemonic, new)?; self.finish(); a }
+            },
+            AddressingMode::ZeroPageX => match ph {
+                1 => { let (v, a) = self.fetch(b); self.state.operand = v; self.state.phase = 2; a }
+                2 => { let a = self.read(b, u16::from(self.state.operand)); self.state.effective = u16::from(self.state.operand.wrapping_add(self.state.x)); self.state.phase = 3; a }
+                3 => { let a = self.read(b, self.state.effective); if let BusAccess::Read { value, .. } = a { self.state.operand = value; } self.state.phase = 4; a }
+                4 => { self.state.low = self.transform(op.mnemonic, self.state.operand)?; self.state.phase = 5; self.write(b, self.state.effective, self.state.operand) }
+                _ => { let new = self.state.low; let a = self.write(b, self.state.effective, new); self.finish_rmw(op.mnemonic, new)?; self.finish(); a }
+            },
+            AddressingMode::Absolute => match ph {
+                1 => { let (v, a) = self.fetch(b); self.state.low = v; self.state.phase = 2; a }
+                2 => { let (v, a) = self.fetch(b); self.state.effective = u16::from_le_bytes([self.state.low, v]); self.state.phase = 3; a }
+                3 => { let a = self.read(b, self.state.effective); if let BusAccess::Read { value, .. } = a { self.state.operand = value; } self.state.phase = 4; a }
+                4 => { self.state.low = self.transform(op.mnemonic, self.state.operand)?; self.state.phase = 5; self.write(b, self.state.effective, self.state.operand) }
+                _ => { let new = self.state.low; let a = self.write(b, self.state.effective, new); self.finish_rmw(op.mnemonic, new)?; self.finish(); a }
+            },
+            AddressingMode::AbsoluteX => match ph {
+                1 => { let (v, a) = self.fetch(b); self.state.low = v; self.state.phase = 2; a }
+                2 => { let (v, a) = self.fetch(b); self.state.base = u16::from_le_bytes([self.state.low, v]); self.state.effective = self.state.base.wrapping_add(u16::from(self.state.x)); self.state.phase = 3; a }
+                3 => { let addr = (self.state.base & 0xFF00) | (self.state.effective & 0x00FF); self.state.phase = 4; self.read(b, addr) }
+                4 => { let a = self.read(b, self.state.effective); if let BusAccess::Read { value, .. } = a { self.state.operand = value; } self.state.phase = 5; a }
+                5 => { self.state.low = self.transform(op.mnemonic, self.state.operand)?; self.state.phase = 6; self.write(b, self.state.effective, self.state.operand) }
+                _ => { let new = self.state.low; let a = self.write(b, self.state.effective, new); self.finish_rmw(op.mnemonic, new)?; self.finish(); a }
+            },
+            AddressingMode::IndexedIndirect => match ph {
+                1 => { let (v, a) = self.fetch(b); self.state.operand = v; self.state.phase = 2; a }
+                2 => { let a = self.read(b, u16::from(self.state.operand)); self.state.operand = self.state.operand.wrapping_add(self.state.x); self.state.phase = 3; a }
+                3 => { let addr = u16::from(self.state.operand); let v = b.read(addr); self.state.low = v; self.state.phase = 4; BusAccess::Read { address: addr, value: v } }
+                4 => { let addr = u16::from(self.state.operand.wrapping_add(1)); let v = b.read(addr); self.state.effective = u16::from_le_bytes([self.state.low, v]); self.state.phase = 5; BusAccess::Read { address: addr, value: v } }
+                5 => { let a = self.read(b, self.state.effective); if let BusAccess::Read { value, .. } = a { self.state.operand = value; } self.state.phase = 6; a }
+                6 => { self.state.low = self.transform(op.mnemonic, self.state.operand)?; self.state.phase = 7; self.write(b, self.state.effective, self.state.operand) }
+                _ => { let new = self.state.low; let a = self.write(b, self.state.effective, new); self.finish_rmw(op.mnemonic, new)?; self.finish(); a }
+            },
+            AddressingMode::IndirectIndexed => match ph {
+                1 => { let (v, a) = self.fetch(b); self.state.operand = v; self.state.phase = 2; a }
+                2 => { let addr = u16::from(self.state.operand); let v = b.read(addr); self.state.low = v; self.state.phase = 3; BusAccess::Read { address: addr, value: v } }
+                3 => { let addr = u16::from(self.state.operand.wrapping_add(1)); let v = b.read(addr); self.state.base = u16::from_le_bytes([self.state.low, v]); self.state.effective = self.state.base.wrapping_add(u16::from(self.state.y)); self.state.phase = 4; BusAccess::Read { address: addr, value: v } }
+                4 => { let addr = (self.state.base & 0xFF00) | (self.state.effective & 0x00FF); self.state.phase = 5; self.read(b, addr) }
+                5 => { let a = self.read(b, self.state.effective); if let BusAccess::Read { value, .. } = a { self.state.operand = value; } self.state.phase = 6; a }
+                6 => { self.state.low = self.transform(op.mnemonic, self.state.operand)?; self.state.phase = 7; self.write(b, self.state.effective, self.state.operand) }
+                _ => { let new = self.state.low; let a = self.write(b, self.state.effective, new); self.finish_rmw(op.mnemonic, new)?; self.finish(); a }
+            },
+            _ => return Err(CpuFault::UnsupportedInstruction { opcode: self.state.opcode }),
+        };
+        Ok(access)
+    }
+
+    fn implied(&mut self,m:Mnemonic)->Result<(),CpuFault>{use Mnemonic::*;match m{
+        CLC=>self.state.p&=!flags::CARRY,CLD=>self.state.p&=!flags::DECIMAL,CLI=>self.state.p&=!flags::INTERRUPT_DISABLE,
+        CLV=>self.state.p&=!flags::OVERFLOW,SEC=>self.state.p|=flags::CARRY,SED=>self.state.p|=flags::DECIMAL,SEI=>self.state.p|=flags::INTERRUPT_DISABLE,
+        DEX=>{self.state.x=self.state.x.wrapping_sub(1);self.nz(self.state.x)},DEY=>{self.state.y=self.state.y.wrapping_sub(1);self.nz(self.state.y)},
+        INX=>{self.state.x=self.state.x.wrapping_add(1);self.nz(self.state.x)},INY=>{self.state.y=self.state.y.wrapping_add(1);self.nz(self.state.y)},
+        TAX=>{self.state.x=self.state.a;self.nz(self.state.x)},TAY=>{self.state.y=self.state.a;self.nz(self.state.y)},
+        TSX=>{self.state.x=self.state.sp;self.nz(self.state.x)},TXA=>{self.state.a=self.state.x;self.nz(self.state.a)},
+        TXS=>self.state.sp=self.state.x,TYA=>{self.state.a=self.state.y;self.nz(self.state.a)},
+        ASL=>{let value=self.state.a;let result=self.transform(ASL,value)?;self.state.a=result;self.nz(result)},
+        LSR=>{let value=self.state.a;let result=self.transform(LSR,value)?;self.state.a=result;self.nz(result)},
+        ROL=>{let value=self.state.a;let result=self.transform(ROL,value)?;self.state.a=result;self.nz(result)},
+        ROR=>{let value=self.state.a;let result=self.transform(ROR,value)?;self.state.a=result;self.nz(result)},
+        NOP=>{},
+        _=>return Err(CpuFault::UnsupportedInstruction{opcode:self.state.opcode})}self.state.p|=flags::UNUSED;Ok(())}
+
+    /// Executes one bus cycle. It never performs more than one bus read/write.
+    pub fn clock<B:CpuBus>(&mut self,b:&mut B)->Result<BusAccess,CpuFault>{
+        if self.state.halted && !self.state.reset_pending{return Err(CpuFault::Jammed{opcode:self.state.opcode});}
+        self.state.cycles=self.state.cycles.wrapping_add(1);
+        if self.state.phase==0 {
+            if self.state.reset_pending {
+                self.state.reset_pending=false;self.state.nmi_pending=false;self.state.interrupt_kind=3;self.state.phase=1;
+                return Ok(self.read(b,self.state.pc));
+            }
+            if self.state.nmi_pending || (self.state.irq_line && self.state.p & flags::INTERRUPT_DISABLE == 0) {
+                self.state.interrupt_kind = if self.state.nmi_pending { 2 } else { 1 };
+                self.state.nmi_pending = false;
+                self.state.phase = 1;
+                return Ok(self.read(b, self.state.pc));
+            }
+            let (v,a)=self.fetch(b);self.state.opcode=v;self.state.phase=1;
+            if decode(v).jams_cpu{self.state.halted=true;}return Ok(a);
+        }
+        if self.state.interrupt_kind != 0 {
+            return self.interrupt_cycle(b, self.state.phase);
+        }
+        let op=*decode(self.state.opcode);let ph=self.state.phase;
+        match kind(&op){
+            Kind::Implied=>{let a=self.read(b,self.state.pc);self.implied(op.mnemonic)?;self.finish();Ok(a)}
+            Kind::Branch=>{
+                if ph==1{let(v,a)=self.fetch(b);self.state.operand=v;if !self.branch(op.mnemonic){self.finish();}
+                    else{self.state.base=self.state.pc;self.state.effective=self.state.pc.wrapping_add((v as i8 as i16) as u16);
+                        self.state.crossed_page=self.state.pc&0xFF00!=self.state.effective&0xFF00;self.state.phase=2;}Ok(a)}
+                else{let old=self.state.pc;let addr=if ph==2{old}else{(old&0xFF00)|(self.state.effective&0xFF)};
+                    let a=self.read(b,addr);if ph==2&&self.state.crossed_page{self.state.pc=(old&0xFF00)|(self.state.effective&0xFF);self.state.phase=3;}
+                    else{self.state.pc=self.state.effective;self.finish();}Ok(a)}
+            }
+            Kind::Control=>self.control_cycle(b,op,ph),
+            Kind::ReadModifyWrite=>self.rmw_cycle(b,op,ph),
+            Kind::Read|Kind::Write=>self.memory_cycle(b,op,ph)
+        }
+    }
+
+    fn memory_cycle<B:CpuBus>(&mut self,b:&mut B,op:Opcode,ph:u8)->Result<BusAccess,CpuFault>{
+        let wr=kind(&op)==Kind::Write;let idx=match op.mode{AddressingMode::ZeroPageX|AddressingMode::AbsoluteX=>self.state.x,
+            AddressingMode::ZeroPageY|AddressingMode::AbsoluteY=>self.state.y,_=>0};
+        let a=match op.mode{
+            AddressingMode::Immediate=>{let(v,a)=self.fetch(b);self.apply(op.mnemonic,v)?;self.finish();a}
+            AddressingMode::ZeroPage=>if ph==1{let(v,a)=self.fetch(b);self.state.effective=u16::from(v);self.state.phase=2;a}else{
+                let a=if wr{self.write(b,self.state.effective,self.store_value(op.mnemonic)?)}else{let a=self.read(b,self.state.effective);if let BusAccess::Read{value,..}=a{self.apply(op.mnemonic,value)?;}a};self.finish();a}
+            AddressingMode::ZeroPageX|AddressingMode::ZeroPageY=>match ph{
+                1=>{let(v,a)=self.fetch(b);self.state.operand=v;self.state.phase=2;a}
+                2=>{let a=self.read(b,u16::from(self.state.operand));self.state.effective=u16::from(self.state.operand.wrapping_add(idx));self.state.phase=3;a}
+                _=>{let a=if wr{self.write(b,self.state.effective,self.store_value(op.mnemonic)?)}else{let a=self.read(b,self.state.effective);if let BusAccess::Read{value,..}=a{self.apply(op.mnemonic,value)?;}a};self.finish();a}}
+            AddressingMode::Absolute=>match ph{
+                1=>{let(v,a)=self.fetch(b);self.state.low=v;self.state.phase=2;a}
+                2=>{let(v,a)=self.fetch(b);self.state.effective=u16::from_le_bytes([self.state.low,v]);self.state.phase=3;a}
+                _=>{let a=if wr{self.write(b,self.state.effective,self.store_value(op.mnemonic)?)}else{let a=self.read(b,self.state.effective);if let BusAccess::Read{value,..}=a{self.apply(op.mnemonic,value)?;}a};self.finish();a}}
+            AddressingMode::AbsoluteX|AddressingMode::AbsoluteY=>match ph{
+                1=>{let(v,a)=self.fetch(b);self.state.low=v;self.state.phase=2;a}
+                2=>{let(v,a)=self.fetch(b);self.state.base=u16::from_le_bytes([self.state.low,v]);self.state.effective=self.state.base.wrapping_add(u16::from(idx));
+                    self.state.crossed_page=self.state.base&0xFF00!=self.state.effective&0xFF00;self.state.phase=3;a}
+                3=>{let addr=(self.state.base&0xFF00)|(self.state.effective&0xFF);let a=self.read(b,addr);
+                    if wr||self.state.crossed_page{self.state.phase=4;}else{if let BusAccess::Read{value,..}=a{self.apply(op.mnemonic,value)?;}self.finish();}a}
+                _=>{let a=if wr{self.write(b,self.state.effective,self.store_value(op.mnemonic)?)}else{let a=self.read(b,self.state.effective);if let BusAccess::Read{value,..}=a{self.apply(op.mnemonic,value)?;}a};self.finish();a}}
+            AddressingMode::IndexedIndirect=>match ph{
+                1=>{let(v,a)=self.fetch(b);self.state.operand=v;self.state.phase=2;a}
+                2=>{let a=self.read(b,u16::from(self.state.operand));self.state.operand=self.state.operand.wrapping_add(self.state.x);self.state.phase=3;a}
+                3=>{let addr=u16::from(self.state.operand);let v=b.read(addr);self.state.low=v;self.state.phase=4;BusAccess::Read{address:addr,value:v}}
+                4=>{let addr=u16::from(self.state.operand.wrapping_add(1));let v=b.read(addr);self.state.effective=u16::from_le_bytes([self.state.low,v]);self.state.phase=5;BusAccess::Read{address:addr,value:v}}
+                _=>{let a=if wr{self.write(b,self.state.effective,self.store_value(op.mnemonic)?)}else{let a=self.read(b,self.state.effective);if let BusAccess::Read{value,..}=a{self.apply(op.mnemonic,value)?;}a};self.finish();a}}
+            AddressingMode::IndirectIndexed=>match ph{
+                1=>{let(v,a)=self.fetch(b);self.state.operand=v;self.state.phase=2;a}
+                2=>{let addr=u16::from(self.state.operand);let v=b.read(addr);self.state.low=v;self.state.phase=3;BusAccess::Read{address:addr,value:v}}
+                3=>{let addr=u16::from(self.state.operand.wrapping_add(1));let v=b.read(addr);self.state.base=u16::from_le_bytes([self.state.low,v]);
+                    self.state.effective=self.state.base.wrapping_add(u16::from(self.state.y));self.state.crossed_page=self.state.base&0xFF00!=self.state.effective&0xFF00;
+                    self.state.phase=4;BusAccess::Read{address:addr,value:v}}
+                4=>{let addr=(self.state.base&0xFF00)|(self.state.effective&0xFF);let a=self.read(b,addr);
+                    if wr||self.state.crossed_page{self.state.phase=5;}else{if let BusAccess::Read{value,..}=a{self.apply(op.mnemonic,value)?;}self.finish();}a}
+                _=>{let a=if wr{self.write(b,self.state.effective,self.store_value(op.mnemonic)?)}else{let a=self.read(b,self.state.effective);if let BusAccess::Read{value,..}=a{self.apply(op.mnemonic,value)?;}a};self.finish();a}}
+            _=>return Err(CpuFault::UnsupportedInstruction{opcode:self.state.opcode})
+        };Ok(a)
+    }
+}
+
+#[cfg(test)]
+mod tests{
+ use super::*;use std::collections::BTreeMap;
+ #[derive(Default)]struct Ram{m:BTreeMap<u16,u8>,log:Vec<BusAccess>}
+ impl CpuBus for Ram{fn read(&mut self,a:u16)->u8{let v=*self.m.get(&a).unwrap_or(&0);self.log.push(BusAccess::Read{address:a,value:v});v}
+ fn write(&mut self,a:u16,v:u8){self.m.insert(a,v);self.log.push(BusAccess::Write{address:a,value:v});}}
+ #[test]fn lda_immediate_is_two_bus_cycles(){let mut b=Ram::default();b.m.insert(0x8000,0xA9);b.m.insert(0x8001,0x42);let mut c=CycleCpu::new();c.set_pc(0x8000);
+ c.clock(&mut b).unwrap();assert_eq!(c.state().phase,1);c.clock(&mut b).unwrap();assert_eq!(c.state().a,0x42);assert_eq!(c.state().cycles,2);assert_eq!(c.state().phase,0);}
+ #[test]
+ fn implied_instruction_dummy_read_does_not_increment_pc() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0xE8); // INX
+     b.m.insert(0x8001,0xA9); // LDA #$42 must execute next
+     b.m.insert(0x8002,0x42);
+     let mut c=CycleCpu::new();
+     c.set_pc(0x8000);
+
+     c.clock(&mut b).unwrap(); // opcode fetch
+     let dummy = c.clock(&mut b).unwrap();
+     assert_eq!(dummy,BusAccess::Read{address:0x8001,value:0xA9});
+     assert_eq!(c.state().pc,0x8001);
+     assert_eq!(c.state().x,1);
+
+     c.clock(&mut b).unwrap();
+     c.clock(&mut b).unwrap();
+     assert_eq!(c.state().a,0x42);
+     assert_eq!(c.state().pc,0x8003);
+ }
+
+ #[test]fn zero_page_sta_writes_on_third_cycle(){let mut b=Ram::default();b.m.insert(0x8000,0x85);b.m.insert(0x8001,0x10);let mut c=CycleCpu::new();c.set_pc(0x8000);c.set_a(0x77);
+ c.clock(&mut b).unwrap();c.clock(&mut b).unwrap();assert_eq!(c.clock(&mut b).unwrap(),BusAccess::Write{address:0x10,value:0x77});}
+ #[test]fn absolute_indexed_read_has_page_cross_cycle(){let mut b=Ram::default();b.m.insert(0x8000,0xBD);b.m.insert(0x8001,0xFF);b.m.insert(0x8002,0x20);b.m.insert(0x2100,0x66);
+ let mut c=CycleCpu::new();c.set_pc(0x8000);c.set_x(1);for _ in 0..5{c.clock(&mut b).unwrap();}assert_eq!(c.state().a,0x66);assert_eq!(c.state().cycles,5);}
+ #[test]fn snapshot_resumes_mid_instruction(){let mut b=Ram::default();b.m.insert(0x9000,0xA9);b.m.insert(0x9001,0x31);let mut c=CycleCpu::new();c.set_pc(0x9000);c.clock(&mut b).unwrap();
+ let mut resumed=CycleCpu::new();resumed.restore_state(c.state());resumed.clock(&mut b).unwrap();assert_eq!(resumed.state().a,0x31);assert_eq!(resumed.state().phase,0);}
+
+ #[test]
+ fn zero_page_asl_performs_read_old_write_and_write_new() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0x06); // ASL $10
+     b.m.insert(0x8001,0x10);
+     b.m.insert(0x0010,0x81);
+     let mut c=CycleCpu::new(); c.set_pc(0x8000);
+     let accesses: Vec<_>=(0..5).map(|_|c.clock(&mut b).unwrap()).collect();
+     assert_eq!(accesses, vec![
+         BusAccess::Read{address:0x8000,value:0x06},
+         BusAccess::Read{address:0x8001,value:0x10},
+         BusAccess::Read{address:0x0010,value:0x81},
+         BusAccess::Write{address:0x0010,value:0x81},
+         BusAccess::Write{address:0x0010,value:0x02},
+     ]);
+     assert_eq!(b.m.get(&0x0010),Some(&0x02));
+     assert_ne!(c.state().p & flags::CARRY,0);
+     assert_eq!(c.state().phase,0);
+ }
+
+ #[test]
+ fn absolute_x_rmw_has_index_dummy_read_and_two_writes() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0x1E); // ASL $20FF,X
+     b.m.insert(0x8001,0xFF);
+     b.m.insert(0x8002,0x20);
+     b.m.insert(0x2000,0x00);
+     b.m.insert(0x2100,0x40);
+     let mut c=CycleCpu::new(); c.set_pc(0x8000); c.set_x(1);
+     let accesses: Vec<_>=(0..7).map(|_|c.clock(&mut b).unwrap()).collect();
+     assert_eq!(accesses[3],BusAccess::Read{address:0x2000,value:0x00});
+     assert_eq!(accesses[4],BusAccess::Read{address:0x2100,value:0x40});
+     assert_eq!(accesses[5],BusAccess::Write{address:0x2100,value:0x40});
+     assert_eq!(accesses[6],BusAccess::Write{address:0x2100,value:0x80});
+ }
+
+ #[test]
+ fn accumulator_lsr_updates_carry_and_zero_flags() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0x4A);
+     let mut c=CycleCpu::new(); c.set_pc(0x8000); c.set_a(1);
+     c.clock(&mut b).unwrap(); c.clock(&mut b).unwrap();
+     assert_eq!(c.state().a,0);
+     assert_ne!(c.state().p & flags::CARRY,0);
+     assert_ne!(c.state().p & flags::ZERO,0);
+ }
+
+
+ #[test]
+ fn unofficial_slo_indexed_indirect_uses_eight_cycles() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0x03); // SLO ($20,X)
+     b.m.insert(0x8001,0x20);
+     b.m.insert(0x0021,0x00);
+     b.m.insert(0x0022,0x30);
+     b.m.insert(0x3000,0x81);
+     let mut c=CycleCpu::new(); c.set_pc(0x8000); c.set_x(1); c.set_a(0x01);
+     let accesses: Vec<_>=(0..8).map(|_|c.clock(&mut b).unwrap()).collect();
+     assert_eq!(accesses[5],BusAccess::Read{address:0x3000,value:0x81});
+     assert_eq!(accesses[6],BusAccess::Write{address:0x3000,value:0x81});
+     assert_eq!(accesses[7],BusAccess::Write{address:0x3000,value:0x02});
+     assert_eq!(c.state().a,0x03);
+ }
+
+ #[test]
+ fn unofficial_dcp_indirect_indexed_uses_eight_cycles() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0xD3); // DCP ($20),Y
+     b.m.insert(0x8001,0x20);
+     b.m.insert(0x0020,0xFF);
+     b.m.insert(0x0021,0x20);
+     b.m.insert(0x2100,0x10);
+     let mut c=CycleCpu::new(); c.set_pc(0x8000); c.set_y(1); c.set_a(0x0F);
+     let accesses: Vec<_>=(0..8).map(|_|c.clock(&mut b).unwrap()).collect();
+     assert_eq!(accesses[4],BusAccess::Read{address:0x2000,value:0x00});
+     assert_eq!(accesses[5],BusAccess::Read{address:0x2100,value:0x10});
+     assert_eq!(accesses[6],BusAccess::Write{address:0x2100,value:0x10});
+     assert_eq!(accesses[7],BusAccess::Write{address:0x2100,value:0x0F});
+     assert_ne!(c.state().p & flags::CARRY,0);
+ }
+
+
+ #[test]
+ fn jsr_and_rts_use_hardware_stack_bus_cycles() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0x20); b.m.insert(0x8001,0x34); b.m.insert(0x8002,0x12);
+     let mut c=CycleCpu::new(); c.set_pc(0x8000);
+     let jsr: Vec<_>=(0..6).map(|_|c.clock(&mut b).unwrap()).collect();
+     assert_eq!(jsr[2],BusAccess::Read{address:0x01FD,value:0});
+     assert_eq!(jsr[3],BusAccess::Write{address:0x01FD,value:0x80});
+     assert_eq!(jsr[4],BusAccess::Write{address:0x01FC,value:0x02});
+     assert_eq!(c.state().pc,0x1234); assert_eq!(c.state().sp,0xFB);
+
+     b.m.insert(0x1234,0x60); // RTS
+     b.m.insert(0x01FC,0x02); b.m.insert(0x01FD,0x80);
+     let rts: Vec<_>=(0..6).map(|_|c.clock(&mut b).unwrap()).collect();
+     assert_eq!(rts[3],BusAccess::Read{address:0x01FC,value:0x02});
+     assert_eq!(rts[4],BusAccess::Read{address:0x01FD,value:0x80});
+     assert_eq!(c.state().pc,0x8003); assert_eq!(c.state().sp,0xFD);
+ }
+
+ #[test]
+ fn brk_pushes_pc_and_status_then_reads_irq_vector() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0x00); b.m.insert(0x8001,0xEA);
+     b.m.insert(0xFFFE,0x00); b.m.insert(0xFFFF,0x90);
+     let mut c=CycleCpu::new(); c.set_pc(0x8000);
+     let trace: Vec<_>=(0..7).map(|_|c.clock(&mut b).unwrap()).collect();
+     assert_eq!(trace[1],BusAccess::Read{address:0x8001,value:0xEA});
+     assert_eq!(trace[2],BusAccess::Write{address:0x01FD,value:0x80});
+     assert_eq!(trace[3],BusAccess::Write{address:0x01FC,value:0x02});
+     assert_eq!(trace[4],BusAccess::Write{address:0x01FB,value:flags::INTERRUPT_DISABLE|flags::UNUSED|flags::BREAK});
+     assert_eq!(trace[5],BusAccess::Read{address:0xFFFE,value:0x00});
+     assert_eq!(trace[6],BusAccess::Read{address:0xFFFF,value:0x90});
+     assert_eq!(c.state().pc,0x9000); assert_eq!(c.state().sp,0xFA);
+ }
+
+ #[test]
+ fn indirect_jmp_preserves_the_6502_page_wrap_bug() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0x6C); b.m.insert(0x8001,0xFF); b.m.insert(0x8002,0x12);
+     b.m.insert(0x12FF,0x34); b.m.insert(0x1200,0x56); b.m.insert(0x1300,0x99);
+     let mut c=CycleCpu::new(); c.set_pc(0x8000);
+     for _ in 0..5 { c.clock(&mut b).unwrap(); }
+     assert_eq!(c.state().pc,0x5634);
+ }
+
+
+ #[test]
+ fn rti_restores_status_pc_and_stack_pointer() {
+     let mut b=Ram::default();
+     b.m.insert(0x9000,0x40);
+     b.m.insert(0x01FA,0x00);
+     b.m.insert(0x01FB,flags::CARRY|flags::BREAK);
+     b.m.insert(0x01FC,0x34);
+     b.m.insert(0x01FD,0x12);
+     let mut c=CycleCpu::new(); c.set_pc(0x9000);
+     let mut state=c.state(); state.sp=0xFA; c.restore_state(state);
+     for _ in 0..6 { c.clock(&mut b).unwrap(); }
+     assert_eq!(c.state().pc,0x1234);
+     assert_eq!(c.state().sp,0xFD);
+     assert_ne!(c.state().p & flags::CARRY,0);
+     assert_eq!(c.state().p & flags::BREAK,0);
+     assert_ne!(c.state().p & flags::UNUSED,0);
+ }
+
+ #[test]
+ fn pha_and_pla_round_trip_accumulator() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0x48); // PHA
+     b.m.insert(0x8001,0x68); // PLA
+     let mut c=CycleCpu::new(); c.set_pc(0x8000); c.set_a(0xA5);
+     for _ in 0..3 { c.clock(&mut b).unwrap(); }
+     assert_eq!(c.state().sp,0xFC);
+     assert_eq!(b.m.get(&0x01FD),Some(&0xA5));
+     for _ in 0..4 { c.clock(&mut b).unwrap(); }
+     assert_eq!(c.state().a,0xA5);
+     assert_eq!(c.state().sp,0xFD);
+ }
+
+
+ #[test]
+ fn irq_entry_is_seven_bus_cycles_and_pushes_b_clear_status() {
+     let mut b=Ram::default();
+     b.m.insert(0xFFFE,0x00); b.m.insert(0xFFFF,0x90);
+     let mut c=CycleCpu::new(); c.set_pc(0x8123); c.set_irq_line(true);
+     let mut state=c.state(); state.p &= !flags::INTERRUPT_DISABLE; c.restore_state(state);
+     let trace: Vec<_>=(0..7).map(|_|c.clock(&mut b).unwrap()).collect();
+     assert_eq!(trace[0],BusAccess::Read{address:0x8123,value:0});
+     assert_eq!(trace[1],BusAccess::Read{address:0x8123,value:0});
+     assert_eq!(trace[2],BusAccess::Write{address:0x01FD,value:0x81});
+     assert_eq!(trace[3],BusAccess::Write{address:0x01FC,value:0x23});
+     assert_eq!(trace[4],BusAccess::Write{address:0x01FB,value:flags::UNUSED});
+     assert_eq!(trace[5],BusAccess::Read{address:0xFFFE,value:0x00});
+     assert_eq!(trace[6],BusAccess::Read{address:0xFFFF,value:0x90});
+     assert_eq!(c.state().pc,0x9000);
+     assert_ne!(c.state().p & flags::INTERRUPT_DISABLE,0);
+ }
+
+ #[test]
+ fn nmi_has_priority_over_irq_and_uses_nmi_vector() {
+     let mut b=Ram::default();
+     b.m.insert(0xFFFA,0x00); b.m.insert(0xFFFB,0xA0);
+     let mut c=CycleCpu::new(); c.set_pc(0x8000); c.set_irq_line(true); c.request_nmi();
+     for _ in 0..7 { c.clock(&mut b).unwrap(); }
+     assert_eq!(c.state().pc,0xA000);
+     assert!(!c.state().nmi_pending);
+     assert_eq!(c.state().interrupt_kind,0);
+ }
+
+
+ #[test]
+ fn reset_uses_seven_cycles_reads_stack_and_loads_reset_vector() {
+     let mut b=Ram::default();
+     b.m.insert(0xFFFC,0x00); b.m.insert(0xFFFD,0xC0);
+     let mut c=CycleCpu::new(); c.set_pc(0x8123); c.request_reset();
+     let trace: Vec<_>=(0..7).map(|_|c.clock(&mut b).unwrap()).collect();
+     assert_eq!(trace[0],BusAccess::Read{address:0x8123,value:0});
+     assert_eq!(trace[1],BusAccess::Read{address:0x8123,value:0});
+     assert_eq!(trace[2],BusAccess::Read{address:0x01FD,value:0});
+     assert_eq!(trace[3],BusAccess::Read{address:0x01FC,value:0});
+     assert_eq!(trace[4],BusAccess::Read{address:0x01FB,value:0});
+     assert_eq!(trace[5],BusAccess::Read{address:0xFFFC,value:0x00});
+     assert_eq!(trace[6],BusAccess::Read{address:0xFFFD,value:0xC0});
+     assert_eq!(c.state().pc,0xC000);
+     assert_eq!(c.state().sp,0xFA);
+     assert_ne!(c.state().p & flags::INTERRUPT_DISABLE,0);
+ }
+
+ #[test]
+ fn reset_releases_the_cpu_from_kil_jam() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0x02);
+     b.m.insert(0xFFFC,0x00); b.m.insert(0xFFFD,0x90);
+     let mut c=CycleCpu::new(); c.set_pc(0x8000);
+     c.clock(&mut b).unwrap();
+     assert!(matches!(c.clock(&mut b),Err(CpuFault::Jammed{..})));
+     c.request_reset();
+     for _ in 0..7 { c.clock(&mut b).unwrap(); }
+     assert_eq!(c.state().pc,0x9000);
+     assert!(!c.state().halted);
+ }
+
+
+ #[test]
+ fn stable_unofficial_immediate_alu_operations_update_registers_and_flags() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0x4B); b.m.insert(0x8001,0x03); // ALR #$03
+     b.m.insert(0x8002,0x0B); b.m.insert(0x8003,0xFF); // ANC #$FF
+     b.m.insert(0x8004,0xCB); b.m.insert(0x8005,0x10); // AXS #$10
+     let mut c=CycleCpu::new(); c.set_pc(0x8000); c.set_a(0xFF); c.set_x(0x0F);
+     for _ in 0..2 { c.clock(&mut b).unwrap(); }
+     assert_eq!(c.state().a,0x01);
+     assert_ne!(c.state().p & flags::CARRY,0);
+     for _ in 0..2 { c.clock(&mut b).unwrap(); }
+     assert_eq!(c.state().a,0x01);
+     assert_eq!(c.state().p & flags::CARRY,0);
+     for _ in 0..2 { c.clock(&mut b).unwrap(); }
+     assert_eq!(c.state().x,0xF1);
+     assert_eq!(c.state().p & flags::CARRY,0);
+ }
+
+ #[test]
+ fn arr_immediate_uses_2a03_rotate_and_bit_flags() {
+     let mut b=Ram::default(); b.m.insert(0x8000,0x6B); b.m.insert(0x8001,0xFF);
+     let mut c=CycleCpu::new(); c.set_pc(0x8000); c.set_a(0xFF);
+     let mut state=c.state(); state.p|=flags::CARRY; c.restore_state(state);
+     c.clock(&mut b).unwrap(); c.clock(&mut b).unwrap();
+     assert_eq!(c.state().a,0xFF);
+     assert_ne!(c.state().p & flags::CARRY,0);
+     assert_eq!(c.state().p & flags::OVERFLOW,0);
+ }
+
+ #[test]
+ fn las_loads_accumulator_x_and_stack_pointer() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0xBB); b.m.insert(0x8001,0xFF); b.m.insert(0x8002,0x20);
+     b.m.insert(0x2100,0xF3);
+     let mut c=CycleCpu::new(); c.set_pc(0x8000); c.set_y(1);
+     let mut state=c.state(); state.sp=0xFF; c.restore_state(state);
+     for _ in 0..5 { c.clock(&mut b).unwrap(); }
+     assert_eq!(c.state().a,0xF3); assert_eq!(c.state().x,0xF3); assert_eq!(c.state().sp,0xF3);
+ }
+
+}
