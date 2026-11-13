@@ -612,4 +612,45 @@ mod tests{
      assert!(!c.state().halted);
  }
 
+
+ #[test]
+ fn stable_unofficial_immediate_alu_operations_update_registers_and_flags() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0x4B); b.m.insert(0x8001,0x03); // ALR #$03
+     b.m.insert(0x8002,0x0B); b.m.insert(0x8003,0xFF); // ANC #$FF
+     b.m.insert(0x8004,0xCB); b.m.insert(0x8005,0x10); // AXS #$10
+     let mut c=CycleCpu::new(); c.set_pc(0x8000); c.set_a(0xFF); c.set_x(0x0F);
+     for _ in 0..2 { c.clock(&mut b).unwrap(); }
+     assert_eq!(c.state().a,0x01);
+     assert_ne!(c.state().p & flags::CARRY,0);
+     for _ in 0..2 { c.clock(&mut b).unwrap(); }
+     assert_eq!(c.state().a,0x01);
+     assert_eq!(c.state().p & flags::CARRY,0);
+     for _ in 0..2 { c.clock(&mut b).unwrap(); }
+     assert_eq!(c.state().x,0xF1);
+     assert_eq!(c.state().p & flags::CARRY,0);
+ }
+
+ #[test]
+ fn arr_immediate_uses_2a03_rotate_and_bit_flags() {
+     let mut b=Ram::default(); b.m.insert(0x8000,0x6B); b.m.insert(0x8001,0xFF);
+     let mut c=CycleCpu::new(); c.set_pc(0x8000); c.set_a(0xFF);
+     let mut state=c.state(); state.p|=flags::CARRY; c.restore_state(state);
+     c.clock(&mut b).unwrap(); c.clock(&mut b).unwrap();
+     assert_eq!(c.state().a,0xFF);
+     assert_ne!(c.state().p & flags::CARRY,0);
+     assert_eq!(c.state().p & flags::OVERFLOW,0);
+ }
+
+ #[test]
+ fn las_loads_accumulator_x_and_stack_pointer() {
+     let mut b=Ram::default();
+     b.m.insert(0x8000,0xBB); b.m.insert(0x8001,0xFF); b.m.insert(0x8002,0x20);
+     b.m.insert(0x2100,0xF3);
+     let mut c=CycleCpu::new(); c.set_pc(0x8000); c.set_y(1);
+     let mut state=c.state(); state.sp=0xFF; c.restore_state(state);
+     for _ in 0..5 { c.clock(&mut b).unwrap(); }
+     assert_eq!(c.state().a,0xF3); assert_eq!(c.state().x,0xF3); assert_eq!(c.state().sp,0xF3);
+ }
+
 }
