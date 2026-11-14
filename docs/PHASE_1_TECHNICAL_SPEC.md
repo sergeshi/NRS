@@ -5,7 +5,7 @@
 **Статус:** проектная спецификация, не описание уже реализованной системы  
 **Целевая платформа разработки:** Windows / Linux / macOS  
 **Язык:** Rust, edition 2024  
-**Формат проекта:** \`.nrsproj\` (полная спецификация сериализации — отдельный документ)
+**Формат проекта:** `.nrsproj` (полная спецификация сериализации — отдельный документ)
 
 ---
 
@@ -63,21 +63,21 @@ Blueprint в NRS — не замена эмулятору и не набор п�
 - **UserDefined** — добавлено пользователем;
 - **Opaque** — машинный фрагмент сохранён как непрозрачный блок без утверждения о его смысле.
 
-Имя вроде \`UpdatePlayer\` может быть пользовательской гипотезой, но не должно записываться как восстановленное исходное имя, если его нет в символах/отладочных данных.
+Имя вроде `UpdatePlayer` может быть пользовательской гипотезой, но не должно записываться как восстановленное исходное имя, если его нет в символах/отладочных данных.
 
 ### 2.2. Источник истины
 
 | Данные | Источник истины |
 |---|---|
-| Байты ROM, заголовок, хеш | \`nrs-rom\` |
-| Состояние регистров и микрошаг CPU | \`nrs-cpu\` |
+| Байты ROM, заголовок, хеш | `nrs-rom` |
+| Состояние регистров и микрошаг CPU | `nrs-cpu` |
 | Состояние PPU/APU | соответствующие crates |
-| Маршрутизация и побочные эффекты памяти | \`nrs-memory\` + mapper |
-| Порядок тактов и согласованность устройств | \`nrs-emulator\` |
+| Маршрутизация и побочные эффекты памяти | `nrs-memory` + mapper |
+| Порядок тактов и согласованность устройств | `nrs-emulator` |
 | Факты наблюдения | trace/event stream |
-| Декодирование и гипотезы | \`nrs-analysis\` |
-| Машинное и визуальное представление | \`nrs-ir\` |
-| Пользовательские правки и проектные метаданные | \`nrs-project\` |
+| Декодирование и гипотезы | `nrs-analysis` |
+| Машинное и визуальное представление | `nrs-ir` |
+| Пользовательские правки и проектные метаданные | `nrs-project` |
 
 Анализатор не меняет аппаратное состояние задним числом. Blueprint-редактор не должен подменять исходные байты без явной операции компиляции.
 
@@ -98,7 +98,7 @@ Blueprint в NRS — не замена эмулятору и не набор п�
 
 Предлагаемая целевая структура:
 
-\`\`\`text
+```text
 NRS/
 ├── Cargo.toml
 ├── README.md
@@ -121,30 +121,30 @@ NRS/
     ├── fixtures/
     ├── roms/
     └── expected/
-\`\`\`
+```
 
-На момент написания документа в репозитории создан workspace только с \`nrs-core\` и \`nrs-cpu\`. Остальные crates — планируемая структура. Добавлять их следует постепенно, когда появляется реальная ответственность и тесты; не создавать пустые crates только ради схемы.
+На момент написания документа в репозитории создан workspace только с `nrs-core` и `nrs-cpu`. Остальные crates — планируемая структура. Добавлять их следует постепенно, когда появляется реальная ответственность и тесты; не создавать пустые crates только ради схемы.
 
 ### 3.1. Ответственность crates
 
 | Crate | Ответственность | Не должен делать |
 |---|---|---|
-| \`nrs-core\` | Общие типы адресов/тактов, Region, ошибки, ID, рациональный clock divider, версии snapshot, общие trace-типы | Знать конкретные opcode, mapper и UI |
-| \`nrs-rom\` | Парсинг iNES/NES 2.0, валидация заголовка, trainer, PRG/CHR ROM/RAM, метаданные и хеш исходного образа | Исполнять код или менять ROM |
-| \`nrs-cpu\` | Ricoh 2A03: регистры, opcode table, микропоследовательности, IRQ/NMI/RESET, CPU-visible bus contract | Самостоятельно адресовать RAM/mapper без bus |
-| \`nrs-mappers\` | Контракт mapper и реализации банкового переключения, mirroring, IRQ/CHR mapping | Знать внутренности CPU или UI |
-| \`nrs-memory\` | CPU bus, PPU bus, RAM, open bus, зеркалирование регистров, маршрутизация к устройствам и cartridge | Декодировать инструкции |
-| \`nrs-ppu\` | Регистры PPU, VRAM/OAM/palette, тайминг, NMI, рендеринг | Читать ROM напрямую в обход PPU bus |
-| \`nrs-apu\` | Регистры APU, каналы, frame sequencer, DMC request/IRQ, audio sample stream | Управлять CPU циклом самостоятельно |
-| \`nrs-ir\` | Схема IR: ROM map, instructions, blocks, edges, provenance, confidence, annotations | Решать, является ли гипотеза доказанным фактом |
-| \`nrs-emulator\` | Сборка устройств, master scheduler, ввод, DMA arbitration, run loop, snapshots, trace sink | Содержать UI или эвристики анализа |
-| \`nrs-analysis\` | Статический decode, CFG, bank-aware analysis, trace correlation, гипотезы функций/данных | Менять машинную семантику |
-| \`nrs-project\` | Проектные метаданные, сериализация IR, ссылки на ROM, настройки анализа, версии формата | Быть источником состояния работающего эмулятора |
-| \`nrs-cli\` | Headless команды: inspect ROM, run test, trace, analyze, snapshot diagnostics | Дублировать логику crates |
+| `nrs-core` | Общие типы адресов/тактов, Region, ошибки, ID, рациональный clock divider, версии snapshot, общие trace-типы | Знать конкретные opcode, mapper и UI |
+| `nrs-rom` | Парсинг iNES/NES 2.0, валидация заголовка, trainer, PRG/CHR ROM/RAM, метаданные и хеш исходного образа | Исполнять код или менять ROM |
+| `nrs-cpu` | Ricoh 2A03: регистры, opcode table, микропоследовательности, IRQ/NMI/RESET, CPU-visible bus contract | Самостоятельно адресовать RAM/mapper без bus |
+| `nrs-mappers` | Контракт mapper и реализации банкового переключения, mirroring, IRQ/CHR mapping | Знать внутренности CPU или UI |
+| `nrs-memory` | CPU bus, PPU bus, RAM, open bus, зеркалирование регистров, маршрутизация к устройствам и cartridge | Декодировать инструкции |
+| `nrs-ppu` | Регистры PPU, VRAM/OAM/palette, тайминг, NMI, рендеринг | Читать ROM напрямую в обход PPU bus |
+| `nrs-apu` | Регистры APU, каналы, frame sequencer, DMC request/IRQ, audio sample stream | Управлять CPU циклом самостоятельно |
+| `nrs-ir` | Схема IR: ROM map, instructions, blocks, edges, provenance, confidence, annotations | Решать, является ли гипотеза доказанным фактом |
+| `nrs-emulator` | Сборка устройств, master scheduler, ввод, DMA arbitration, run loop, snapshots, trace sink | Содержать UI или эвристики анализа |
+| `nrs-analysis` | Статический decode, CFG, bank-aware analysis, trace correlation, гипотезы функций/данных | Менять машинную семантику |
+| `nrs-project` | Проектные метаданные, сериализация IR, ссылки на ROM, настройки анализа, версии формата | Быть источником состояния работающего эмулятора |
+| `nrs-cli` | Headless команды: inspect ROM, run test, trace, analyze, snapshot diagnostics | Дублировать логику crates |
 
 ### 3.2. Направление зависимостей
 
-\`\`\`text
+```text
                  nrs-cli
                     |
                nrs-project
@@ -162,18 +162,18 @@ NRS/
                        nrs-mappers
                            |
                          nrs-rom
-\`\`\`
+```
 
 Схема показывает логические связи, а не разрешение на циклические зависимости. Реальная компоновка должна оставаться ациклической:
 
-- \`nrs-core\` не зависит от остальных crates;
-- \`nrs-rom\` зависит только от \`nrs-core\`;
-- \`nrs-cpu\`, \`nrs-ppu\`, \`nrs-apu\` зависят от общих контрактов, но не друг от друга;
-- \`nrs-mappers\` использует модель картриджа и общие bus-типы;
-- \`nrs-memory\` соединяет bus-контракты устройств и mapper;
-- \`nrs-emulator\` является composition root и связывает устройства;
-- \`nrs-analysis\` потребляет ROM metadata, opcode metadata и trace stream;
-- \`nrs-ir\` не зависит от runtime и может сохраняться независимо.
+- `nrs-core` не зависит от остальных crates;
+- `nrs-rom` зависит только от `nrs-core`;
+- `nrs-cpu`, `nrs-ppu`, `nrs-apu` зависят от общих контрактов, но не друг от друга;
+- `nrs-mappers` использует модель картриджа и общие bus-типы;
+- `nrs-memory` соединяет bus-контракты устройств и mapper;
+- `nrs-emulator` является composition root и связывает устройства;
+- `nrs-analysis` потребляет ROM metadata, opcode metadata и trace stream;
+- `nrs-ir` не зависит от runtime и может сохраняться независимо.
 
 Если для связи двух crates возникает цикл, общий контракт выносится в нижележащий crate, а не решается взаимной зависимостью.
 
@@ -183,9 +183,9 @@ NRS/
 
 Публичные API ниже — целевые сигнатуры и смысловые контракты. Это не утверждение, что они уже реализованы. Детали типов могут уточняться в процессе кодирования, но семантика должна сохраняться.
 
-### 4.1. Общие типы — \`nrs-core\`
+### 4.1. Общие типы — `nrs-core`
 
-\`\`\`rust
+```rust
 pub enum Region {
     Ntsc,
     Pal,
@@ -208,18 +208,18 @@ pub trait SnapshotComponent {
     fn restore(&mut self, snapshot: &Self::Snapshot)
         -> Result<(), SnapshotError>;
 }
-\`\`\`
+```
 
 Контракты:
 
-- \`MasterTick\`, \`CpuCycle\`, \`PpuDot\` не смешиваются в одном неразмеченном \`u64\`;
+- `MasterTick`, `CpuCycle`, `PpuDot` не смешиваются в одном неразмеченном `u64`;
 - clock divider хранит фазу и при восстановлении продолжает ту же последовательность делений;
 - ошибки имеют машинно-читаемые варианты (invalid header, unsupported mapper, truncated ROM, incompatible snapshot и т. п.);
 - версии snapshot и project format независимы друг от друга.
 
-### 4.2. ROM — \`nrs-rom\`
+### 4.2. ROM — `nrs-rom`
 
-\`\`\`rust
+```rust
 pub struct RomImage {
     pub format: RomFormat,
     pub header: RomHeader,
@@ -231,11 +231,11 @@ pub struct RomImage {
 }
 
 pub fn parse_rom(bytes: &[u8]) -> Result<RomImage, RomError>;
-\`\`\`
+```
 
 Обязательные проверки:
 
-- сигнатура \`NES\\x1A\`;
+- сигнатура `NES\\x1A`;
 - версия iNES/NES 2.0 по правилам формата;
 - переполнение размеров и выход за пределы входного буфера;
 - trainer учитывается при расчёте смещений;
@@ -245,9 +245,9 @@ pub fn parse_rom(bytes: &[u8]) -> Result<RomImage, RomError>;
 
 Парсер не должен «исправлять» повреждённые заголовки без сохранения исходных байтов и диагностического сообщения.
 
-### 4.3. CPU — \`nrs-cpu\`
+### 4.3. CPU — `nrs-cpu`
 
-\`\`\`rust
+```rust
 pub struct OpcodeDesc {
     pub opcode: u8,
     pub mnemonic: Mnemonic,
@@ -273,13 +273,13 @@ impl Cpu {
     pub fn restore(&mut self, snapshot: &CpuSnapshot)
         -> Result<(), CpuError>;
 }
-\`\`\`
+```
 
 Критические требования:
 
-1. \`clock\` продвигает ровно один CPU cycle.
+1. `clock` продвигает ровно один CPU cycle.
 2. На каждом цикле выполняется соответствующий bus access, если он предусмотрен микропоследовательностью. Dummy read/write — наблюдаемые операции.
-3. \`step_instruction\` (если предоставлен) реализуется поверх повторных вызовов \`clock\`, а не отдельным атомарным интерпретатором.
+3. `step_instruction` (если предоставлен) реализуется поверх повторных вызовов `clock`, а не отдельным атомарным интерпретатором.
 4. Декодер total: все 256 значений имеют descriptor.
 5. Таблица opcode отделена от исполнения; disassembler и анализатор используют ту же таблицу.
 6. Состояние включает незавершённую микропоследовательность и все latch/temporary address, необходимые для продолжения.
@@ -290,9 +290,9 @@ impl Cpu {
 
 Подробные последовательности циклов и группы undocumented opcodes задаются документом [CPU_MICROCODE.md](CPU_MICROCODE.md).
 
-### 4.4. Mapper — \`nrs-mappers\`
+### 4.4. Mapper — `nrs-mappers`
 
-\`\`\`rust
+```rust
 pub trait Mapper {
     fn cpu_read(&mut self, address: u16) -> MapperRead;
     fn cpu_write(&mut self, address: u16, value: u8);
@@ -302,7 +302,7 @@ pub trait Mapper {
     fn clock_cpu(&mut self);
     fn irq_pending(&self) -> bool;
 }
-\`\`\`
+```
 
 Контракт mapper:
 
@@ -315,9 +315,9 @@ pub trait Mapper {
 
 Первый обязательный mapper — NROM. UxROM/CNROM добавляются после стабилизации mapper API. Неизвестный mapper не подменяется NROM.
 
-### 4.5. Memory buses — \`nrs-memory\`
+### 4.5. Memory buses — `nrs-memory`
 
-\`\`\`rust
+```rust
 pub struct CpuBusState {
     pub open_bus: u8,
     pub ram: Box<[u8; 0x800]>,
@@ -337,32 +337,32 @@ impl CpuBus for MemorySystem {
     fn read(&mut self, address: u16, kind: CpuAccessKind) -> u8;
     fn write(&mut self, address: u16, value: u8, kind: CpuAccessKind);
 }
-\`\`\`
+```
 
 CPU address map:
 
 | Диапазон | Назначение | Примечание |
 |---|---|---|
-| \`$0000-$1FFF\` | 2 KiB internal RAM | Зеркала каждые \`$0800\` |
-| \`$2000-$3FFF\` | PPU registers | Зеркала каждые 8 байт; побочные эффекты регистров сохраняются |
-| \`$4000-$4017\` | APU и контроллеры | Регистры APU, DMA, status, input ports |
-| \`$4018-$401F\` | Test/disabled expansion area | Явно определённое поведение open bus/неподдерживаемого диапазона |
-| \`$4020-$FFFF\` | Cartridge/expansion | Маршрутизация через mapper и cartridge board |
+| `$0000-$1FFF` | 2 KiB internal RAM | Зеркала каждые `$0800` |
+| `$2000-$3FFF` | PPU registers | Зеркала каждые 8 байт; побочные эффекты регистров сохраняются |
+| `$4000-$4017` | APU и контроллеры | Регистры APU, DMA, status, input ports |
+| `$4018-$401F` | Test/disabled expansion area | Явно определённое поведение open bus/неподдерживаемого диапазона |
+| `$4020-$FFFF` | Cartridge/expansion | Маршрутизация через mapper и cartridge board |
 
 PPU address map:
 
 | Диапазон | Назначение |
 |---|---|
-| \`$0000-$1FFF\` | CHR через mapper |
-| \`$2000-$2FFF\` | Nametable RAM с mirroring |
-| \`$3000-$3EFF\` | Зеркало nametable области |
-| \`$3F00-$3FFF\` | Palette RAM и её зеркала |
+| `$0000-$1FFF` | CHR через mapper |
+| `$2000-$2FFF` | Nametable RAM с mirroring |
+| `$3000-$3EFF` | Зеркало nametable области |
+| `$3F00-$3FFF` | Palette RAM и её зеркала |
 
 Нельзя реализовывать memory map простым массивом 64 KiB: чтения PPU/APU-регистров, open bus, mapper и DMA имеют побочные эффекты и временные свойства.
 
-### 4.6. PPU — \`nrs-ppu\`
+### 4.6. PPU — `nrs-ppu`
 
-\`\`\`rust
+```rust
 pub struct PpuPosition {
     pub scanline: u16,
     pub dot: u16,
@@ -379,7 +379,7 @@ impl Ppu {
     pub fn cpu_read_register(&mut self, register: PpuRegister) -> u8;
     pub fn cpu_write_register(&mut self, register: PpuRegister, value: u8);
 }
-\`\`\`
+```
 
 Минимальная модель первого этапа:
 
@@ -394,9 +394,9 @@ impl Ppu {
 
 Риск: PPU rendering timing имеет множество граничных случаев. Простая «отрисовка кадра после CPU-инструкций» не является допустимой архитектурой. Рендеринг должен быть привязан к PPU dots и реальным PPU bus fetches. Точность каждого obscure rendering bug не является критерием первого релиза, но известные тестируемые базовые сценарии должны проходить.
 
-### 4.7. APU — \`nrs-apu\`
+### 4.7. APU — `nrs-apu`
 
-\`\`\`rust
+```rust
 pub struct ApuEvents {
     pub irq: bool,
     pub dmc_dma_request: Option<DmcDmaRequest>,
@@ -408,7 +408,7 @@ impl Apu {
     pub fn read_status(&mut self) -> u8;
     pub fn write_register(&mut self, address: u16, value: u8);
 }
-\`\`\`
+```
 
 Минимальная граница первого этапа:
 
@@ -421,9 +421,9 @@ impl Apu {
 
 Высокоточная аналоговая фильтрация и калибровка под конкретные ревизии не входят в первый критерий. Но регистровые side effects, frame IRQ и DMC stalls нельзя имитировать только генерацией произвольного звука.
 
-### 4.8. Emulator orchestration — \`nrs-emulator\`
+### 4.8. Emulator orchestration — `nrs-emulator`
 
-\`\`\`rust
+```rust
 pub struct EmulatorConfig {
     pub region: Region,
     pub trace: TraceConfig,
@@ -444,9 +444,9 @@ impl Emulator {
     pub fn restore_snapshot(&mut self, snapshot: &EmulatorSnapshot)
         -> Result<(), EmulatorError>;
 }
-\`\`\`
+```
 
-Только \`nrs-emulator\` определяет порядок продвижения устройств. CPU не вызывает PPU напрямую, APU не меняет PC, PPU не управляет scheduler.
+Только `nrs-emulator` определяет порядок продвижения устройств. CPU не вызывает PPU напрямую, APU не меняет PC, PPU не управляет scheduler.
 
 ---
 
@@ -477,7 +477,7 @@ impl Emulator {
 
 DMA не должна реализовываться как блокирующая копия массива поверх CPU:
 
-- OAM DMA инициируется записью в \`$4014\`;
+- OAM DMA инициируется записью в `$4014`;
 - CPU останавливается на аппаратно определённое количество циклов (обычно 513/514 в зависимости от alignment);
 - во время DMA продолжаются PPU/APU clock и необходимые bus accesses;
 - DMC DMA может отбирать bus cycles и взаимодействовать с OAM DMA;
@@ -509,7 +509,7 @@ Snapshot — не просто копия регистров CPU. Для дет�
 
 ### 6.2. Snapshot API и версии
 
-\`\`\`rust
+```rust
 pub struct SnapshotHeader {
     pub schema_version: u32,
     pub emulator_build: String,
@@ -529,7 +529,7 @@ pub struct EmulatorSnapshot {
     pub input: InputSnapshot,
     pub dma: DmaSnapshot,
 }
-\`\`\`
+```
 
 Требования:
 
@@ -559,7 +559,7 @@ UI, визуальная шкала, быстрый scrub и хранение б
 
 ### 7.1. Событие трассы
 
-\`\`\`rust
+```rust
 pub struct BusTraceEvent {
     pub sequence: u64,
     pub cpu_cycle: CpuCycle,
@@ -573,7 +573,7 @@ pub struct BusTraceEvent {
     pub opcode: Option<u8>,
     pub mapper_context: MapperContext,
 }
-\`\`\`
+```
 
 Трасса должна различать opcode fetch, operand read, data read/write, dummy read/write, stack access, vector fetch, DMA access и другие значимые типы. Нельзя сводить все чтения к одному событию Read.
 
@@ -591,7 +591,7 @@ pub struct BusTraceEvent {
 
 ### 7.2. Поток данных
 
-\`\`\`text
+```text
 ROM bytes
    |
 nrs-rom ----> Cartridge metadata / bank map
@@ -610,14 +610,14 @@ nrs-emulator --> TraceSink --> TraceEvent stream
          CFG + observed edges
                 |
        future Blueprint editor
-\`\`\`
+```
 
 Trace sink должен быть сменным:
 
-- \`NullTraceSink\` для производительности;
-- \`RingBufferTraceSink\` для интерактивной диагностики;
-- \`FileTraceSink\` для воспроизводимых тестов;
-- \`AnalysisTraceSink\` для передачи событий анализатору.
+- `NullTraceSink` для производительности;
+- `RingBufferTraceSink` для интерактивной диагностики;
+- `FileTraceSink` для воспроизводимых тестов;
+- `AnalysisTraceSink` для передачи событий анализатору.
 
 Полный trace может быть очень большим. Runtime не должен бесконтрольно хранить его весь в RAM. Нужны фильтры, лимиты, потоковая запись и явное сообщение о потерянных событиях.
 
@@ -650,7 +650,7 @@ IR должен быть:
 
 ### 8.2. Основные сущности
 
-\`\`\`rust
+```rust
 pub struct ProgramIr {
     pub schema_version: u32,
     pub source: RomSourceRef,
@@ -675,26 +675,26 @@ pub struct InstructionIr {
     pub provenance: Provenance,
     pub confidence: Confidence,
 }
-\`\`\`
+```
 
 Рекомендуемые типы узлов:
 
 | Узел | Назначение |
 |---|---|
-| \`Instruction\` | Декодированная машинная инструкция |
-| \`OpaqueBytes\` | Байты неизвестного/неподдержанного участка |
-| \`BasicBlock\` | Последовательность инструкций с одним входом |
-| \`CallSite\` | Вызов подпрограммы |
-| \`Branch\` | Условный/безусловный переход |
-| \`InterruptVector\` | Вход через NMI/RESET/IRQ vector |
-| \`MemoryAccess\` | Наблюдаемые чтения/записи |
-| \`MapperTransition\` | Изменение bank mapping |
-| \`Annotation\` | Имя, комментарий, гипотеза, цвет/группа для UI |
-| \`UnknownSemantic\` | Декодируемый opcode или участок с неподдержанной/неустановленной семантикой |
+| `Instruction` | Декодированная машинная инструкция |
+| `OpaqueBytes` | Байты неизвестного/неподдержанного участка |
+| `BasicBlock` | Последовательность инструкций с одним входом |
+| `CallSite` | Вызов подпрограммы |
+| `Branch` | Условный/безусловный переход |
+| `InterruptVector` | Вход через NMI/RESET/IRQ vector |
+| `MemoryAccess` | Наблюдаемые чтения/записи |
+| `MapperTransition` | Изменение bank mapping |
+| `Annotation` | Имя, комментарий, гипотеза, цвет/группа для UI |
+| `UnknownSemantic` | Декодируемый opcode или участок с неподдержанной/неустановленной семантикой |
 
 ### 8.3. Адрес и идентичность
 
-Один и тот же логический адрес может отображать разные PRG banks. Поэтому ключ инструкции не может быть только \`u16\`.
+Один и тот же логический адрес может отображать разные PRG banks. Поэтому ключ инструкции не может быть только `u16`.
 
 Идентичность должна учитывать как минимум:
 
@@ -710,17 +710,17 @@ pub struct InstructionIr {
 
 Типы связей:
 
-- \`Fallthrough\`;
-- \`ConditionalTaken\`;
-- \`ConditionalNotTaken\`;
-- \`Jump\`;
-- \`Call\`;
-- \`Return\`;
-- \`InterruptEntry\`;
-- \`ObservedTransition\`;
-- \`InferredTransition\`;
-- \`BankSwitch\`;
-- \`UnknownTarget\`.
+- `Fallthrough`;
+- `ConditionalTaken`;
+- `ConditionalNotTaken`;
+- `Jump`;
+- `Call`;
+- `Return`;
+- `InterruptEntry`;
+- `ObservedTransition`;
+- `InferredTransition`;
+- `BankSwitch`;
+- `UnknownTarget`.
 
 У каждой связи есть provenance и confidence. Статически вычисленная цель branch не должна выглядеть как фактически пройденная трассой.
 
@@ -732,7 +732,7 @@ pub struct InstructionIr {
 
 ### 8.6. Двусторонний pipeline
 
-\`\`\`text
+```text
 ROM bytes
    |
 decode + map + trace
@@ -750,7 +750,7 @@ Machine IR + relocation plan
 assembler + linker (future)
    v
 ROM image
-\`\`\`
+```
 
 На первом этапе реализуется ROM → metadata → static/dynamic IR. Обратный путь ограничен сохранением неизменённых байтов и проектированием интерфейса lowering. Полноценная компиляция изменённых графов в ROM не заявляется как готовая функция.
 
@@ -764,7 +764,7 @@ ROM image
 2. Рассчитать SHA-256 и сохранить размер/имя источника.
 3. Разобрать iNES/NES 2.0 header.
 4. Проверить длину, trainer, PRG/CHR regions и арифметику смещений.
-5. Построить \`RomImage\` и cartridge metadata.
+5. Построить `RomImage` и cartridge metadata.
 6. Определить mapper/submapper и наличие реализации.
 7. Создать проектную запись ROM asset.
 8. Построить первичную карту PRG/CHR banks и векторов.
@@ -822,11 +822,11 @@ ROM image
 
 ---
 
-## 10. Проектный формат \`.nrsproj\`
+## 10. Проектный формат `.nrsproj`
 
 В первом этапе фиксируется концептуальная структура, но формат должен оставаться версионируемым:
 
-\`\`\`text
+```text
 project.nrsproj/
 ├── project.json
 ├── assets/
@@ -841,7 +841,7 @@ project.nrsproj/
 │   └── <snapshot-id>.nrsnap
 └── user/
     └── annotations.json
-\`\`\`
+```
 
 Допускается и единый файл-контейнер в будущем. Важно разделять:
 
@@ -864,16 +864,16 @@ project.nrsproj/
 
 | Crate | Обязательные тесты |
 |---|---|
-| \`nrs-core\` | Rational divider, phase restore, региональные коэффициенты, overflow boundaries |
-| \`nrs-rom\` | iNES/NES2 headers, trainer offsets, CHR RAM, truncated/oversized input, invalid mapper metadata |
-| \`nrs-cpu\` | Все addressing modes, flags, stack, wraparound, page crossing, unofficial opcodes, IRQ/NMI/RESET |
-| \`nrs-mappers\` | PRG/CHR mapping, bank switching, mirroring, mapper snapshots |
-| \`nrs-memory\` | RAM/register mirrors, open bus, side effects, PPU bus mapping |
-| \`nrs-ppu\` | Register latches, buffered reads, vblank/NMI timing, address mirrors, OAM |
-| \`nrs-apu\` | Register semantics, frame sequencer, IRQ, timer progression, DMC request |
-| \`nrs-emulator\` | Scheduler order, DMA stalls, input determinism, snapshot restore |
-| \`nrs-analysis\` | CFG edges, bank context, ambiguous decode, trace correlation |
-| \`nrs-ir\` | Stable IDs, serialization round-trip, provenance preservation |
+| `nrs-core` | Rational divider, phase restore, региональные коэффициенты, overflow boundaries |
+| `nrs-rom` | iNES/NES2 headers, trainer offsets, CHR RAM, truncated/oversized input, invalid mapper metadata |
+| `nrs-cpu` | Все addressing modes, flags, stack, wraparound, page crossing, unofficial opcodes, IRQ/NMI/RESET |
+| `nrs-mappers` | PRG/CHR mapping, bank switching, mirroring, mapper snapshots |
+| `nrs-memory` | RAM/register mirrors, open bus, side effects, PPU bus mapping |
+| `nrs-ppu` | Register latches, buffered reads, vblank/NMI timing, address mirrors, OAM |
+| `nrs-apu` | Register semantics, frame sequencer, IRQ, timer progression, DMC request |
+| `nrs-emulator` | Scheduler order, DMA stalls, input determinism, snapshot restore |
+| `nrs-analysis` | CFG edges, bank context, ambiguous decode, trace correlation |
+| `nrs-ir` | Stable IDs, serialization round-trip, provenance preservation |
 
 ### 11.2. CPU conformance
 
@@ -927,9 +927,9 @@ project.nrsproj/
 
 ### Gate A — workspace и импорт
 
-- [ ] \`cargo fmt --all -- --check\` проходит.
-- [ ] \`cargo check --workspace\` проходит без ошибок.
-- [ ] \`cargo test --workspace\` проходит.
+- [ ] `cargo fmt --all -- --check` проходит.
+- [ ] `cargo check --workspace` проходит без ошибок.
+- [ ] `cargo test --workspace` проходит.
 - [ ] Валидные iNES ROM разбираются с корректными offsets, trainer и PRG/CHR lengths.
 - [ ] Поддерживаемый поднабор NES 2.0 разбирается корректно.
 - [ ] Повреждённые и усечённые ROM дают понятную ошибку, не panic.
@@ -942,7 +942,7 @@ project.nrsproj/
 - [ ] Официальные инструкции проходят выбранные функциональные тесты.
 - [ ] Стабильные undocumented opcode имеют отдельную семантику и тесты.
 - [ ] Нестабильные opcode имеют явную descriptor/policy и не маскируются под NOP.
-- [ ] Один вызов \`clock\` продвигает ровно один CPU cycle.
+- [ ] Один вызов `clock` продвигает ровно один CPU cycle.
 - [ ] Bus trace подтверждает адрес, направление, значение и цикл для тестов addressing modes.
 - [ ] Dummy reads/writes, page crossing и zero-page wrap проверяются.
 - [ ] Reset, BRK, IRQ, NMI и stack sequences проверяются.
@@ -989,7 +989,7 @@ project.nrsproj/
 
 | Подэтап | Результат | Зависимости |
 |---|---|---|
-| 1.1 Workspace contracts | Уточнены общие типы, ошибки, clock и bus contracts | Уже существующий \`nrs-core\` |
+| 1.1 Workspace contracts | Уточнены общие типы, ошибки, clock и bus contracts | Уже существующий `nrs-core` |
 | 1.2 ROM parser | iNES/NES2 parsing, ROM metadata, hash | 1.1 |
 | 1.3 CPU opcode metadata | Полная таблица 256 opcode и decoder tests | 1.1 |
 | 1.4 CPU microsequencer | Cycle-by-cycle official/unofficial execution, interrupts | 1.3 |
@@ -1014,15 +1014,15 @@ IR должен иметь стабильные node IDs, graph edges, annotatio
 
 ### 14.2. Split Screen
 
-Архитектура должна позволять создать два независимых \`Emulator\` экземпляра:
+Архитектура должна позволять создать два независимых `Emulator` экземпляра:
 
-\`\`\`rust
+```rust
 pub struct ComparisonSession {
     pub original: Emulator,
     pub reconstructed: Emulator,
     pub shared_input: InputTimeline,
 }
-\`\`\`
+```
 
 Оба runtime получают идентичные input events и имеют сопоставимые frame/cycle counters. Визуальное сравнение, синхронная пауза, diff framebuffer и divergence viewer отложены.
 
