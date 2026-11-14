@@ -27,3 +27,9 @@ Not implemented yet:
 ## Build and test
 
 Run cargo fmt --all, cargo test --workspace, and cargo check --workspace.
+
+## Technical documentation
+
+- [Emulator Core architecture baseline](docs/EMULATOR_CORE.md)
+- [Ricoh 2A03 cycle/microcode contract](docs/CPU_MICROCODE.md)
+- [Phase 1 technical specification (Russian)](docs/PHASE_1_TECHNICAL_SPEC.md)
