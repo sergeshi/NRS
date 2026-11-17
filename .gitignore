@@ -1,0 +1,4 @@
+/target/
+*.nes
+/chr_atlas.png
+/smb_disassembly.txt
