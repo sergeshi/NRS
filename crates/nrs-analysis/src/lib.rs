@@ -4,8 +4,10 @@ pub use atlas::write_chr_atlas_png;
 use nrs_rom::{Mirroring, RomFormat, RomImage, TvSystem};
 
 pub mod disasm;
+pub mod coverage;
 
 pub use disasm::{Disassembly, Instruction, disassemble_nrom};
+pub use coverage::{CoverageRange, CoverageReport, analyze_coverage, format_coverage_report};
 
 pub mod labels;
 pub mod xref;
