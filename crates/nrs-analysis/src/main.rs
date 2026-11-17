@@ -1,5 +1,5 @@
 use nrs_analysis::{
-    RomAnalysis, build_cross_references, decode_chr, disassemble_nrom, format_cross_references,
+    RomAnalysis, analyze_coverage, build_cross_references, decode_chr, disassemble_nrom, format_coverage_report, format_cross_references,
     format_listing_with_labels, generate_labels, write_chr_atlas_png,
 };
 use nrs_rom::RomImage;
@@ -79,6 +79,7 @@ fn main() {
     let disassembly = disassemble_nrom(&rom.prg_rom);
     let references = build_cross_references(&disassembly);
     let labels = generate_labels(&disassembly);
+    let coverage = analyze_coverage(rom.prg_rom.len(), &disassembly);
 
     println!();
     println!("CPU STATIC ANALYSIS:");
@@ -111,6 +112,8 @@ fn main() {
         disassembly.unresolved_indirect_jumps.len()
     );
     println!("Invalid targets:  {}", disassembly.invalid_targets.len());
+    println!();
+    print!("{}", format_coverage_report(&coverage, 12));
 
     if let Some(output_path) = disassembly_path {
         let listing = format_listing_with_labels(&disassembly, &labels);
