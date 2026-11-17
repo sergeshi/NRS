@@ -33,11 +33,7 @@ pub fn analyze_coverage(prg_len: usize, disassembly: &Disassembly) -> CoverageRe
             decoded_bytes: 0,
             uncovered_bytes: prg_len,
             coverage_percent: 0.0,
-            uncovered_ranges: if prg_len == 0 {
-                Vec::new()
-            } else {
-                Vec::new()
-            },
+            uncovered_ranges: Vec::new(),
         };
     }
 
