@@ -1,6 +1,4 @@
 use crate::disasm::{Disassembly, Instruction};
-use nrs_cpu::{AddressingMode, Mnemonic};
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CoverageRange {
     pub start: u16,
@@ -131,6 +129,7 @@ pub fn format_coverage_report(report: &CoverageReport, max_ranges: usize) -> Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nrs_cpu::{AddressingMode, Mnemonic};
 
     fn instruction(address: u16, bytes: &[u8]) -> Instruction {
         Instruction {
