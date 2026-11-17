@@ -80,7 +80,7 @@ pub struct MemoryReferenceReport {
 fn memory_access(instruction: &Instruction) -> MemoryAccess {
     use Mnemonic::*;
     match instruction.mnemonic {
-        STA | STX | STY | SAX | AHX | SHX | SHY | TAS => MemoryAccess::Write,
+        STA | STX | STY | SAX | AHX | SHA | SHX | SHY | TAS => MemoryAccess::Write,
         ASL | LSR | ROL | ROR | INC | DEC | SLO | RLA | SRE | RRA | DCP | ISC => {
             MemoryAccess::ReadWrite
         }
@@ -121,7 +121,9 @@ fn reference_for(instruction: &Instruction) -> Option<MemoryReference> {
             (address, MemoryAccess::PointerRead, false, true, false)
         }
         AddressingMode::IndexedIndirect | AddressingMode::IndirectIndexed => {
-            (address & 0x00FF, MemoryAccess::PointerRead, true, true, false)
+            // The encoded zero-page slot is read as a pointer; the instruction's
+            // data access applies to an effective address that static analysis cannot resolve.
+            (address & 0x00FF, memory_access(instruction), true, true, false)
         }
         AddressingMode::Implied
         | AddressingMode::Accumulator
