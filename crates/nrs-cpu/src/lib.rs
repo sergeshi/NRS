@@ -22,9 +22,19 @@ pub mod flags {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AddressingMode {
-    Implied, Accumulator, Immediate, ZeroPage, ZeroPageX, ZeroPageY,
-    Absolute, AbsoluteX, AbsoluteY, Indirect, IndexedIndirect,
-    IndirectIndexed, Relative,
+    Implied,
+    Accumulator,
+    Immediate,
+    ZeroPage,
+    ZeroPageX,
+    ZeroPageY,
+    Absolute,
+    AbsoluteX,
+    AbsoluteY,
+    Indirect,
+    IndexedIndirect,
+    IndirectIndexed,
+    Relative,
 }
 
 impl AddressingMode {
@@ -60,8 +70,13 @@ impl AddressingMode {
     pub const fn instruction_bytes(self) -> u8 {
         match self {
             Self::Implied | Self::Accumulator => 1,
-            Self::Immediate | Self::ZeroPage | Self::ZeroPageX | Self::ZeroPageY
-            | Self::IndexedIndirect | Self::IndirectIndexed | Self::Relative => 2,
+            Self::Immediate
+            | Self::ZeroPage
+            | Self::ZeroPageX
+            | Self::ZeroPageY
+            | Self::IndexedIndirect
+            | Self::IndirectIndexed
+            | Self::Relative => 2,
             Self::Absolute | Self::AbsoluteX | Self::AbsoluteY | Self::Indirect => 3,
         }
     }
@@ -69,12 +84,82 @@ impl AddressingMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Mnemonic {
-    ADC, AHX, ALR, ANC, AND, ARR, ASL, AXS, BCC, BCS, BEQ, BIT, BMI, BNE,
-    BPL, BRK, BVC, BVS, CLC, CLD, CLI, CLV, CMP, CPX, CPY, DCP, DEC, DEX,
-    DEY, EOR, INC, INX, INY, ISC, JMP, JSR, KIL, LAS, LAX, LDA, LDX, LDY,
-    LSR, NOP, ORA, PHA, PHP, PLA, PLP, RLA, ROL, ROR, RRA, RTI, RTS, SAX,
-    SBC, SEC, SED, SEI, SHA, SHX, SHY, SLO, SRE, STA, STX, STY, TAS, TAX,
-    TAY, TSX, TXA, TXS, TYA, XAA,
+    ADC,
+    AHX,
+    ALR,
+    ANC,
+    AND,
+    ARR,
+    ASL,
+    AXS,
+    BCC,
+    BCS,
+    BEQ,
+    BIT,
+    BMI,
+    BNE,
+    BPL,
+    BRK,
+    BVC,
+    BVS,
+    CLC,
+    CLD,
+    CLI,
+    CLV,
+    CMP,
+    CPX,
+    CPY,
+    DCP,
+    DEC,
+    DEX,
+    DEY,
+    EOR,
+    INC,
+    INX,
+    INY,
+    ISC,
+    JMP,
+    JSR,
+    KIL,
+    LAS,
+    LAX,
+    LDA,
+    LDX,
+    LDY,
+    LSR,
+    NOP,
+    ORA,
+    PHA,
+    PHP,
+    PLA,
+    PLP,
+    RLA,
+    ROL,
+    ROR,
+    RRA,
+    RTI,
+    RTS,
+    SAX,
+    SBC,
+    SEC,
+    SED,
+    SEI,
+    SHA,
+    SHX,
+    SHY,
+    SLO,
+    SRE,
+    STA,
+    STX,
+    STY,
+    TAS,
+    TAX,
+    TAY,
+    TSX,
+    TXA,
+    TXS,
+    TYA,
+    XAA,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,15 +184,37 @@ macro_rules! op {
             bytes: AddressingMode::$mode.instruction_bytes(),
             base_cycles: $cycles,
             unofficial: $unofficial,
-            page_cross_penalty: matches!(AddressingMode::$mode,
-                AddressingMode::AbsoluteX | AddressingMode::AbsoluteY | AddressingMode::IndirectIndexed)
-                && matches!(Mnemonic::$mnemonic,
-                    Mnemonic::ADC | Mnemonic::AND | Mnemonic::CMP | Mnemonic::EOR |
-                    Mnemonic::LDA | Mnemonic::LDX | Mnemonic::LDY | Mnemonic::ORA |
-                    Mnemonic::SBC | Mnemonic::LAX | Mnemonic::LAS | Mnemonic::NOP),
-            is_branch: matches!(Mnemonic::$mnemonic,
-                Mnemonic::BCC | Mnemonic::BCS | Mnemonic::BEQ | Mnemonic::BMI |
-                Mnemonic::BNE | Mnemonic::BPL | Mnemonic::BVC | Mnemonic::BVS),
+            page_cross_penalty: matches!(
+                AddressingMode::$mode,
+                AddressingMode::AbsoluteX
+                    | AddressingMode::AbsoluteY
+                    | AddressingMode::IndirectIndexed
+            ) && matches!(
+                Mnemonic::$mnemonic,
+                Mnemonic::ADC
+                    | Mnemonic::AND
+                    | Mnemonic::CMP
+                    | Mnemonic::EOR
+                    | Mnemonic::LDA
+                    | Mnemonic::LDX
+                    | Mnemonic::LDY
+                    | Mnemonic::ORA
+                    | Mnemonic::SBC
+                    | Mnemonic::LAX
+                    | Mnemonic::LAS
+                    | Mnemonic::NOP
+            ),
+            is_branch: matches!(
+                Mnemonic::$mnemonic,
+                Mnemonic::BCC
+                    | Mnemonic::BCS
+                    | Mnemonic::BEQ
+                    | Mnemonic::BMI
+                    | Mnemonic::BNE
+                    | Mnemonic::BPL
+                    | Mnemonic::BVC
+                    | Mnemonic::BVS
+            ),
             jams_cpu: matches!(Mnemonic::$mnemonic, Mnemonic::KIL),
         }
     };
@@ -379,21 +486,40 @@ pub const fn decode(code: u8) -> &'static Opcode {
 }
 
 /// Returns the complete opcode metadata table.
-pub const fn opcode_table() -> &'static [Opcode; 256] { &OPCODES }
+pub const fn opcode_table() -> &'static [Opcode; 256] {
+    &OPCODES
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CpuState {
-    pub a: u8, pub x: u8, pub y: u8, pub stack_pointer: u8,
-    pub program_counter: u16, pub status: u8, pub opcode: u8,
-    pub micro_cycle: u8, pub total_cycles: u64, pub nmi_pending: bool,
+    pub a: u8,
+    pub x: u8,
+    pub y: u8,
+    pub stack_pointer: u8,
+    pub program_counter: u16,
+    pub status: u8,
+    pub opcode: u8,
+    pub micro_cycle: u8,
+    pub total_cycles: u64,
+    pub nmi_pending: bool,
     pub irq_line: bool,
 }
 
 impl Default for CpuState {
     fn default() -> Self {
-        Self { a: 0, x: 0, y: 0, stack_pointer: 0xFD, program_counter: 0,
-            status: flags::INTERRUPT_DISABLE | flags::UNUSED, opcode: 0,
-            micro_cycle: 0, total_cycles: 0, nmi_pending: false, irq_line: false }
+        Self {
+            a: 0,
+            x: 0,
+            y: 0,
+            stack_pointer: 0xFD,
+            program_counter: 0,
+            status: flags::INTERRUPT_DISABLE | flags::UNUSED,
+            opcode: 0,
+            micro_cycle: 0,
+            total_cycles: 0,
+            nmi_pending: false,
+            irq_line: false,
+        }
     }
 }
 
@@ -405,26 +531,56 @@ pub trait CpuBus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Cpu { state: CpuState }
+pub struct Cpu {
+    state: CpuState,
+}
 
 impl Cpu {
     pub const fn new() -> Self {
-        Self { state: CpuState { a: 0, x: 0, y: 0, stack_pointer: 0xFD,
-            program_counter: 0, status: flags::INTERRUPT_DISABLE | flags::UNUSED,
-            opcode: 0, micro_cycle: 0, total_cycles: 0, nmi_pending: false, irq_line: false } }
+        Self {
+            state: CpuState {
+                a: 0,
+                x: 0,
+                y: 0,
+                stack_pointer: 0xFD,
+                program_counter: 0,
+                status: flags::INTERRUPT_DISABLE | flags::UNUSED,
+                opcode: 0,
+                micro_cycle: 0,
+                total_cycles: 0,
+                nmi_pending: false,
+                irq_line: false,
+            },
+        }
     }
-    pub const fn state(&self) -> CpuState { self.state }
+    pub const fn state(&self) -> CpuState {
+        self.state
+    }
     pub fn restore_state(&mut self, mut state: CpuState) {
         state.status |= flags::UNUSED;
         self.state = state;
     }
-    pub fn set_register_a(&mut self, value: u8) { self.state.a = value; }
-    pub fn set_register_x(&mut self, value: u8) { self.state.x = value; }
-    pub fn set_register_y(&mut self, value: u8) { self.state.y = value; }
-    pub fn set_program_counter(&mut self, value: u16) { self.state.program_counter = value; }
-    pub const fn flag(&self, mask: u8) -> bool { self.state.status & mask != 0 }
+    pub fn set_register_a(&mut self, value: u8) {
+        self.state.a = value;
+    }
+    pub fn set_register_x(&mut self, value: u8) {
+        self.state.x = value;
+    }
+    pub fn set_register_y(&mut self, value: u8) {
+        self.state.y = value;
+    }
+    pub fn set_program_counter(&mut self, value: u16) {
+        self.state.program_counter = value;
+    }
+    pub const fn flag(&self, mask: u8) -> bool {
+        self.state.status & mask != 0
+    }
     pub fn set_flag(&mut self, mask: u8, enabled: bool) {
-        if enabled { self.state.status |= mask; } else { self.state.status &= !mask; }
+        if enabled {
+            self.state.status |= mask;
+        } else {
+            self.state.status &= !mask;
+        }
         self.state.status |= flags::UNUSED;
     }
 }
@@ -457,9 +613,9 @@ mod tests {
     fn official_and_unofficial_opcodes_are_both_represented() {
         assert!(!decode(0xA9).unofficial); // LDA immediate
         assert!(!decode(0x00).unofficial); // BRK
-        assert!(decode(0x03).unofficial);  // SLO indexed-indirect
-        assert!(decode(0xEB).unofficial);  // unofficial SBC immediate
-        assert!(decode(0x02).jams_cpu);    // KIL
+        assert!(decode(0x03).unofficial); // SLO indexed-indirect
+        assert!(decode(0xEB).unofficial); // unofficial SBC immediate
+        assert!(decode(0x02).jams_cpu); // KIL
     }
 
     #[test]

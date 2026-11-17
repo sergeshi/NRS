@@ -99,7 +99,10 @@ impl PpuClockDivider {
     ///
     /// Panics if the profile has a zero numerator or denominator.
     pub fn new(profile: TimingProfile) -> Self {
-        assert!(profile.has_valid_clock_ratio(), "invalid CPU/PPU clock ratio");
+        assert!(
+            profile.has_valid_clock_ratio(),
+            "invalid CPU/PPU clock ratio"
+        );
         Self {
             numerator: profile.ppu_per_cpu_num,
             denominator: profile.ppu_per_cpu_den,

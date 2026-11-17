@@ -77,14 +77,27 @@ pub enum RomError {
 impl fmt::Display for RomError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::HeaderTooShort { actual } => write!(f, "ROM header is truncated: {actual}/16 bytes"),
+            Self::HeaderTooShort { actual } => {
+                write!(f, "ROM header is truncated: {actual}/16 bytes")
+            }
             Self::InvalidMagic => write!(f, "invalid iNES magic; expected NES\\x1A"),
-            Self::UnsupportedConsoleType { console_type } => write!(f, "unsupported NES 2.0 console type {console_type}"),
+            Self::UnsupportedConsoleType { console_type } => {
+                write!(f, "unsupported NES 2.0 console type {console_type}")
+            }
             Self::InvalidNes2SizeEncoding => write!(f, "invalid NES 2.0 ROM size encoding"),
             Self::SizeOverflow => write!(f, "ROM size does not fit this platform"),
-            Self::TruncatedTrainer { expected, actual } => write!(f, "trainer is truncated: expected {expected} bytes, found {actual}"),
-            Self::TruncatedPrgRom { expected, actual } => write!(f, "PRG ROM is truncated: expected {expected} bytes, found {actual}"),
-            Self::TruncatedChrRom { expected, actual } => write!(f, "CHR ROM is truncated: expected {expected} bytes, found {actual}"),
+            Self::TruncatedTrainer { expected, actual } => write!(
+                f,
+                "trainer is truncated: expected {expected} bytes, found {actual}"
+            ),
+            Self::TruncatedPrgRom { expected, actual } => write!(
+                f,
+                "PRG ROM is truncated: expected {expected} bytes, found {actual}"
+            ),
+            Self::TruncatedChrRom { expected, actual } => write!(
+                f,
+                "CHR ROM is truncated: expected {expected} bytes, found {actual}"
+            ),
         }
     }
 }
@@ -98,15 +111,20 @@ fn nes2_rom_size(lsb: u8, ms_nibble: u8, unit: usize) -> Result<usize, RomError>
     } else {
         let exponent = u32::from(lsb >> 2);
         let multiplier = u32::from(lsb & 0x03) * 2 + 1;
-        1usize.checked_shl(exponent)
+        1usize
+            .checked_shl(exponent)
             .and_then(|base| base.checked_mul(multiplier as usize))
             .ok_or(RomError::SizeOverflow)
     }
 }
 
 fn ram_size(shift: u8) -> Result<usize, RomError> {
-    if shift == 0 { return Ok(0); }
-    64usize.checked_shl(u32::from(shift)).ok_or(RomError::SizeOverflow)
+    if shift == 0 {
+        return Ok(0);
+    }
+    64usize
+        .checked_shl(u32::from(shift))
+        .ok_or(RomError::SizeOverflow)
 }
 
 impl RomImage {
@@ -121,7 +139,11 @@ impl RomImage {
         raw.copy_from_slice(&data[..HEADER_LEN]);
 
         let nes2 = data[7] & 0x0C == 0x08;
-        let format = if nes2 { RomFormat::Nes2 } else { RomFormat::INes };
+        let format = if nes2 {
+            RomFormat::Nes2
+        } else {
+            RomFormat::INes
+        };
         let console_type = data[7] & 0x03;
         if console_type != 0 {
             return Err(RomError::UnsupportedConsoleType { console_type });
@@ -129,7 +151,11 @@ impl RomImage {
 
         let mapper = (data[6] >> 4) as u16
             | (data[7] & 0xF0) as u16
-            | if nes2 { ((data[8] & 0x0F) as u16) << 8 } else { 0 };
+            | if nes2 {
+                ((data[8] & 0x0F) as u16) << 8
+            } else {
+                0
+            };
         let submapper = if nes2 { data[8] >> 4 } else { 0 };
 
         let (prg_rom_size, chr_rom_size) = if nes2 {
@@ -139,8 +165,12 @@ impl RomImage {
             )
         } else {
             (
-                usize::from(data[4]).checked_mul(16 * 1024).ok_or(RomError::SizeOverflow)?,
-                usize::from(data[5]).checked_mul(8 * 1024).ok_or(RomError::SizeOverflow)?,
+                usize::from(data[4])
+                    .checked_mul(16 * 1024)
+                    .ok_or(RomError::SizeOverflow)?,
+                usize::from(data[5])
+                    .checked_mul(8 * 1024)
+                    .ok_or(RomError::SizeOverflow)?,
             )
         };
 
@@ -158,13 +188,21 @@ impl RomImage {
                 },
             )
         } else {
-            let legacy_ram = if data[8] == 0 { 8 * 1024 } else { usize::from(data[8]) * 8 * 1024 };
+            let legacy_ram = if data[8] == 0 {
+                8 * 1024
+            } else {
+                usize::from(data[8]) * 8 * 1024
+            };
             (
                 legacy_ram,
                 0,
                 if chr_rom_size == 0 { 8 * 1024 } else { 0 },
                 0,
-                if data[9] & 1 != 0 { TvSystem::Pal } else { TvSystem::Ntsc },
+                if data[9] & 1 != 0 {
+                    TvSystem::Pal
+                } else {
+                    TvSystem::Ntsc
+                },
             )
         };
 
@@ -177,40 +215,62 @@ impl RomImage {
         };
 
         let header = RomHeader {
-            format, mapper, submapper, prg_rom_size, chr_rom_size,
-            prg_ram_size, prg_nvram_size, chr_ram_size, chr_nvram_size,
-            mirroring, battery_backed: data[6] & 0x02 != 0,
-            has_trainer: data[6] & 0x04 != 0, tv_system, console_type, raw,
+            format,
+            mapper,
+            submapper,
+            prg_rom_size,
+            chr_rom_size,
+            prg_ram_size,
+            prg_nvram_size,
+            chr_ram_size,
+            chr_nvram_size,
+            mirroring,
+            battery_backed: data[6] & 0x02 != 0,
+            has_trainer: data[6] & 0x04 != 0,
+            tv_system,
+            console_type,
+            raw,
         };
 
         let mut cursor = HEADER_LEN;
         let trainer = if header.has_trainer {
-            let bytes = data.get(cursor..cursor + TRAINER_LEN).ok_or_else(|| RomError::TruncatedTrainer {
-                expected: TRAINER_LEN,
-                actual: data.len().saturating_sub(cursor),
+            let bytes = data.get(cursor..cursor + TRAINER_LEN).ok_or_else(|| {
+                RomError::TruncatedTrainer {
+                    expected: TRAINER_LEN,
+                    actual: data.len().saturating_sub(cursor),
+                }
             })?;
             let mut trainer = [0u8; TRAINER_LEN];
             trainer.copy_from_slice(bytes);
             cursor += TRAINER_LEN;
             Some(trainer)
-        } else { None };
+        } else {
+            None
+        };
 
-        let prg = data.get(cursor..cursor.saturating_add(prg_rom_size)).ok_or_else(|| RomError::TruncatedPrgRom {
-            expected: prg_rom_size,
-            actual: data.len().saturating_sub(cursor),
-        })?;
+        let prg = data
+            .get(cursor..cursor.saturating_add(prg_rom_size))
+            .ok_or_else(|| RomError::TruncatedPrgRom {
+                expected: prg_rom_size,
+                actual: data.len().saturating_sub(cursor),
+            })?;
         let prg_rom = prg.to_vec();
         cursor += prg_rom_size;
 
-        let chr = data.get(cursor..cursor.saturating_add(chr_rom_size)).ok_or_else(|| RomError::TruncatedChrRom {
-            expected: chr_rom_size,
-            actual: data.len().saturating_sub(cursor),
-        })?;
+        let chr = data
+            .get(cursor..cursor.saturating_add(chr_rom_size))
+            .ok_or_else(|| RomError::TruncatedChrRom {
+                expected: chr_rom_size,
+                actual: data.len().saturating_sub(cursor),
+            })?;
         let chr_rom = chr.to_vec();
         cursor += chr_rom_size;
 
         Ok(Self {
-            header, trainer, prg_rom, chr_rom,
+            header,
+            trainer,
+            prg_rom,
+            chr_rom,
             trailing_data: data[cursor..].to_vec(),
         })
     }
@@ -270,9 +330,18 @@ mod tests {
 
     #[test]
     fn rejects_invalid_and_truncated_images() {
-        assert_eq!(RomImage::parse(b"not a rom"), Err(RomError::HeaderTooShort { actual: 9 }));
+        assert_eq!(
+            RomImage::parse(b"not a rom"),
+            Err(RomError::HeaderTooShort { actual: 9 })
+        );
         let mut data = ines(1, 0);
-        assert_eq!(RomImage::parse(&data), Err(RomError::TruncatedPrgRom { expected: 16 * 1024, actual: 0 }));
+        assert_eq!(
+            RomImage::parse(&data),
+            Err(RomError::TruncatedPrgRom {
+                expected: 16 * 1024,
+                actual: 0
+            })
+        );
         data[0] = 0;
         assert_eq!(RomImage::parse(&data), Err(RomError::InvalidMagic));
     }

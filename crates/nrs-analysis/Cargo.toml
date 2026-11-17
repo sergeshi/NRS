@@ -1,0 +1,10 @@
+﻿[package]
+name = "nrs-analysis"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nrs-rom = { path = "../nrs-rom" }
+nrs-cpu = { path = "../nrs-cpu" }
+png = "0.17"
