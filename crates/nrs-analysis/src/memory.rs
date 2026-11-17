@@ -160,9 +160,8 @@ pub fn analyze_memory_references(disassembly: &Disassembly) -> MemoryReferenceRe
         report.references.push(reference);
     }
 
-    report.references.sort_by_key(|reference| {
-        (reference.address, reference.instruction_address)
-    });
+    report.references
+        .sort_by_key(|reference| reference.instruction_address);
     report
 }
 
