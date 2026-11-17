@@ -6,10 +6,12 @@ use nrs_rom::{Mirroring, RomFormat, RomImage, TvSystem};
 pub mod disasm;
 pub mod coverage;
 pub mod code_data;
+pub mod memory;
 
 pub use disasm::{Disassembly, Instruction, disassemble_nrom};
 pub use coverage::{CoverageRange, CoverageReport, analyze_coverage, format_coverage_report};
 pub use code_data::{ByteKind, CodeDataReport, CodeDataSegment, analyze_code_data, format_code_data_report};
+pub use memory::{MemoryAccess, MemoryReference, MemoryReferenceReport, MemoryRegion, analyze_memory_references, classify_memory_address, format_memory_reference_report};
 
 pub mod labels;
 pub mod xref;
