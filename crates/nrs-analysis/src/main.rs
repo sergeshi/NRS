@@ -1,5 +1,5 @@
 use nrs_analysis::{
-    RomAnalysis, analyze_coverage, analyze_code_data, build_cross_references, decode_chr, disassemble_nrom, format_coverage_report, format_code_data_report, format_cross_references,
+    RomAnalysis, analyze_coverage, analyze_code_data, analyze_memory_references, build_cross_references, decode_chr, disassemble_nrom, format_coverage_report, format_code_data_report, format_memory_reference_report, format_cross_references,
     format_listing_with_labels, generate_labels, write_chr_atlas_png,
 };
 use nrs_rom::RomImage;
@@ -81,6 +81,7 @@ fn main() {
     let labels = generate_labels(&disassembly);
     let coverage = analyze_coverage(rom.prg_rom.len(), &disassembly);
     let code_data = analyze_code_data(rom.prg_rom.len(), &disassembly);
+    let memory_references = analyze_memory_references(&disassembly);
 
     println!();
     println!("CPU STATIC ANALYSIS:");
@@ -117,6 +118,8 @@ fn main() {
     print!("{}", format_coverage_report(&coverage, 12));
     println!();
     print!("{}", format_code_data_report(&code_data, 12));
+    println!();
+    print!("{}", format_memory_reference_report(&memory_references, 24));
 
     if let Some(output_path) = disassembly_path {
         let listing = format_listing_with_labels(&disassembly, &labels);
