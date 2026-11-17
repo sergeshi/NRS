@@ -1,4 +1,4 @@
-use crate::disasm::Instruction;
+use crate::disasm::{Disassembly, Instruction};
 use nrs_cpu::{AddressingMode, Mnemonic};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
