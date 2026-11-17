@@ -87,24 +87,18 @@ mod tests {
         let mut prg = vec![0xEA; 0x8000];
 
         // $8000: JSR $8010
-        // $8003: BNE $8007
+        // $8003: BNE $8008
         // $8005: JMP $8010
-        // $8008: RTS
+        // $8008: RTS (branch destination)
         // $8010: RTS
         prg[0x0000..0x0009]
-            .copy_from_slice(&[0x20, 0x10, 0x80, 0xD0, 0x02, 0x4C, 0x10, 0x80, 0x60]);
+            .copy_from_slice(&[0x20, 0x10, 0x80, 0xD0, 0x03, 0x4C, 0x10, 0x80, 0x60]);
         prg[0x0010] = 0x60;
 
         // NMI, RESET, IRQ vectors.
         prg[0x7FFA..0x8000].copy_from_slice(&[0x00, 0x80, 0x00, 0x80, 0x00, 0x80]);
 
         let disassembly = disassemble_nrom(&prg);
-        for instruction in &disassembly.instructions {
-            println!(
-                "${:04X} {:?} {:?} target={:?}",
-                instruction.address, instruction.mnemonic, instruction.mode, instruction.target
-            );
-        }
         let references = build_cross_references(&disassembly);
 
         assert!(
@@ -116,7 +110,7 @@ mod tests {
         assert!(
             references
                 .iter()
-                .any(|r| { r.from == 0x8003 && r.to == 0x8007 && r.kind == ReferenceKind::Branch })
+                .any(|r| { r.from == 0x8003 && r.to == 0x8008 && r.kind == ReferenceKind::Branch })
         );
 
         assert!(
